@@ -1,0 +1,17 @@
+{
+  "name": "meeting-standin",
+  "version": "0.1.0",
+  "description": "Labelled AI stand-in for Google Meet",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test/detect-node.mjs && node test/detect-heldout.mjs && node test/run.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  },
+  "private": true,
+  "type": "module"
+}

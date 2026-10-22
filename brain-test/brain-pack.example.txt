@@ -1,0 +1,3 @@
+Role: <your role>
+Team: <your team>
+Rules: <standing rules and decisions the stand-in may use>

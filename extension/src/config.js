@@ -1,0 +1,42 @@
+// Settings. Saved in the page's local storage; the Meet tab only.
+(function () {
+  const NS = (window.__standin = window.__standin || {});
+  const KEY = 'standin.config';
+
+  const defaults = {
+    enabled: true, // swap camera and mic. Reload the call to change.
+    userName: 'Eswar',
+    names: ['eswar', 'ishwar', 'eshwar', 'iswar', 'pothuri', 'poturi', 'sai'],
+    threshold: 75, // answer only at or above this confidence (0-100)
+    disclosure: true, // first reply says it is an AI stand-in
+    brain: 'stub', // 'stub' (demo rules), 'claude' (extension + API key) or 'relay' (relay.ps1 on this laptop)
+    relayUrl: 'http://127.0.0.1:8765',
+    realVoice: true, // use the Windows voice through the relay when it is running
+    override: true, // when it would hold a yes/no question, show Yes/No buttons in the panel for a few seconds
+    overrideWaitMs: 20000,
+    autoRelay: true, // if the relay is running, use it instead of the demo rules
+    model: 'claude-sonnet-5-5',
+    heldLine: 'I will confirm after the meeting.',
+    captionDebounceMs: 1200,
+    duplicateWindowMs: 15000,
+    // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.
+    contextPack: '',
+    stubRules: [],
+  };
+
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
+  } catch (e) {
+    saved = {};
+  }
+
+  NS.config = Object.assign({}, defaults, saved);
+  NS.saveConfig = function () {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(NS.config));
+    } catch (e) {
+      /* storage can be blocked; the stand-in still works for this call */
+    }
+  };
+})();

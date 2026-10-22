@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Stand-in relay</title></head>
+<body style="font-family:system-ui,sans-serif;margin:12px">
+<h3 style="margin:0 0 6px">AI stand-in relay</h3>
+<p style="margin:0 0 8px">Leave this window open. It passes questions from Meet to the relay on this laptop.</p>
+<pre id="log" style="font-size:12px;white-space:pre-wrap"></pre>
+<script>
+const ALLOWED = '__ALLOWED_ORIGIN__';
+const lines = [];
+function log(t) {
+  lines.unshift(new Date().toISOString() + ' ' + t);
+  document.getElementById('log').textContent = lines.slice(0, 8).join('\n');
+}
+window.addEventListener('message', async function (e) {
+  if (e.origin !== ALLOWED) return;
+  const m = e.data;
+  if (!m || m.source !== 'standin-bridge-req') return;
+  let out;
+  try {
+    if (m.kind === 'ping') {
+      out = { id: m.id, ok: true, text: 'pong' };
+    } else {
+      const r = await fetch('/' + m.kind, { method: 'POST', body: JSON.stringify(m.body || {}) });
+      out = { id: m.id, ok: r.ok, json: await r.json(), error: r.ok ? undefined : 'relay HTTP ' + r.status };
+    }
+    log(m.kind + ' ok');
+  } catch (err) {
+    out = { id: m.id, ok: false, error: String(err) };
+    log(m.kind + ' failed: ' + err);
+  }
+  out.source = 'standin-bridge-res';
+  e.source.postMessage(out, e.origin);
+});
+log('ready');
+</script></body></html>

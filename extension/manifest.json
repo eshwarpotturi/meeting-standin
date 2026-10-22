@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "AI stand-in for meetings",
+  "version": "0.1.0",
+  "description": "A labelled AI stand-in that answers yes/no questions for you in Google Meet, using your own context.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.anthropic.com/*"],
+  "background": { "service_worker": "src/background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": [
+        "src/log.js",
+        "src/config.js",
+        "src/audio.js",
+        "src/avatar.js",
+        "src/brain.js",
+        "src/captions.js",
+        "src/media.js",
+        "src/panel.js",
+        "src/main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["src/bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

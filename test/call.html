@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Test call page</title></head>
+<body style="font-family:system-ui;margin:12px">
+<!-- Stands in for Google Meet: asks for camera and mic, shows the result, has a captions region. -->
+<video id="v" autoplay playsinline muted width="640" height="360"></video>
+<canvas id="c" width="640" height="360" style="display:none"></canvas>
+<div id="caps" aria-label="Captions" style="min-height:40px;border:1px solid #ccc;margin-top:8px"></div>
+<script>
+window.testRig = {
+  stream: null,
+  analyser: null,
+  async join(constraints) {
+    this.stream = await navigator.mediaDevices.getUserMedia(constraints || { video: true, audio: true });
+    document.getElementById('v').srcObject = this.stream;
+    if (this.stream.getAudioTracks().length) {
+      const ac = new AudioContext();
+      await ac.resume();
+      const src = ac.createMediaStreamSource(this.stream);
+      this.analyser = ac.createAnalyser();
+      this.analyser.fftSize = 1024;
+      src.connect(this.analyser);
+    }
+    return {
+      video: this.stream.getVideoTracks().length,
+      audio: this.stream.getAudioTracks().length,
+      vLabel: this.stream.getVideoTracks()[0] && this.stream.getVideoTracks()[0].label,
+      vState: this.stream.getVideoTracks()[0] && this.stream.getVideoTracks()[0].readyState,
+      aState: this.stream.getAudioTracks()[0] && this.stream.getAudioTracks()[0].readyState,
+    };
+  },
+  // Centroid of skin-coloured pixels in the received video = where the head is.
+  head() {
+    const v = document.getElementById('v');
+    const c = document.getElementById('c');
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(v, 0, 0, c.width, c.height);
+    const d = x.getImageData(0, 0, c.width, c.height).data;
+    let n = 0, sx = 0, sy = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (Math.abs(d[i] - 242) < 10 && Math.abs(d[i + 1] - 198) < 10 && Math.abs(d[i + 2] - 160) < 10) {
+        const p = i / 4;
+        sx += p % c.width; sy += Math.floor(p / c.width); n++;
+      }
+    }
+    return n ? { x: sx / n, y: sy / n, n: n } : null;
+  },
+  // Loudest 1024-sample window right now (0..1).
+  loudness() {
+    const a = new Float32Array(this.analyser.fftSize);
+    this.analyser.getFloatTimeDomainData(a);
+    let s = 0;
+    for (const v of a) s += v * v;
+    return Math.sqrt(s / a.length);
+  },
+  // Sample head position and loudness for ms milliseconds.
+  async record(ms, every) {
+    const out = [];
+    const t0 = performance.now();
+    while (performance.now() - t0 < ms) {
+      out.push({ t: Math.round(performance.now() - t0), head: this.head(), loud: this.analyser ? this.loudness() : 0 });
+      await new Promise(r => setTimeout(r, every || 50));
+    }
+    return out;
+  },
+};
+</script>
+</body>
+</html>
