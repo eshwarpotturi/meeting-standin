@@ -18,6 +18,11 @@
     model: 'claude-sonnet-5-5',
     heldLine: 'I will confirm after the meeting.',
     captionDebounceMs: 1200,
+    camera: true, // standin-all.js: show answers as slides on your camera
+    openAnswers: true, // answer open questions from your notes (chat and slides) when sure enough
+    slideStepMs: 5000, // each slide of an open answer
+    slideHoldMs: 9000, // how long a finished answer stays on the camera
+    stubOpen: [], // demo answers for open questions when no relay: [{when, confidence, chat, slides, chart}]
     duplicateWindowMs: 15000,
     // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.
     contextPack: '',

@@ -27,6 +27,16 @@ function Decide($question, $recent, $name) {
   if ($text -match "\{[\s\S]*\}") { return $Matches[0] }
   return '{"answer":"unsure","confidence":0,"reason":"I could not read the answer."}'
 }
+function Answer($question, $recent, $name) {
+  $system = "You are the brain of a labelled AI stand-in that attends a meeting for $name. Someone asked $name an open question. Use only the context pack below. If it does not clearly cover the question, reply {`"answer`":`"unsure`",`"confidence`":0}. Otherwise reply with JSON only: {`"answer`":`"open`",`"confidence`":0-100,`"chat`":`"at most 2 short sentences, first person`",`"slides`":[{`"title`":`"at most 6 words`",`"text`":`"at most 25 words`"}],`"chart`":null or {`"type`":`"pie`" or `"bar`",`"title`":`"...`",`"items`":[{`"label`":`"...`",`"value`":number}]}}. Use 1 to 3 slides. Add a chart only if the context pack has real numbers for it; never invent numbers. Confidence is how sure you are that $name himself would say this."
+  $user = "Context pack:`n$pack`n`nRecent meeting lines:`n$recent`n`nQuestion for ${name}: $question"
+  $body = @{ model = $Model; temperature = 0; messages = @(@{ role = "system"; content = $system }, @{ role = "user"; content = $user }) } | ConvertTo-Json -Depth 6
+  $r = Invoke-RestMethod -Uri "$Base/openai/v1/chat/completions" -Method Post -TimeoutSec 25 -ContentType "application/json; charset=utf-8" `
+    -Headers @{ Authorization = "Bearer ${token}:meeting-standin" } -Body ([Text.Encoding]::UTF8.GetBytes($body))
+  $text = $r.choices[0].message.content
+  if ($text -match "\{[\s\S]*\}") { return $Matches[0] }
+  return '{"answer":"unsure","confidence":0}'
+}
 Add-Type -AssemblyName System.Speech
 function Speak($text) {
   $tmp = [IO.Path]::Combine([IO.Path]::GetTempPath(), "standin-" + [guid]::NewGuid().ToString("N") + ".wav")
@@ -62,6 +72,13 @@ while ($listener.IsListening) {
       $n++; $sw = [Diagnostics.Stopwatch]::StartNew()
       $out = Decide $in.question $in.recent $in.userName
       Log ("question {0}: {1} -> {2} ({3} ms)" -f $n, $in.question, ($out -replace "\s+", " "), $sw.ElapsedMilliseconds)
+      Send $res 200 $out; continue
+    }
+    if ($req.Url.AbsolutePath -eq "/answer" -and $req.HttpMethod -eq "POST") {
+      $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json
+      $n++; $sw = [Diagnostics.Stopwatch]::StartNew()
+      $out = Answer $in.question $in.recent $in.userName
+      Log ("open question {0}: {1} -> {2} ({3} ms)" -f $n, $in.question, ($out -replace "\s+", " "), $sw.ElapsedMilliseconds)
       Send $res 200 $out; continue
     }
     if ($req.Url.AbsolutePath -eq "/tts" -and $req.HttpMethod -eq "POST") {

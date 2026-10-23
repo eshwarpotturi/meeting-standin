@@ -44,6 +44,11 @@
     model: 'claude-sonnet-5-5',
     heldLine: 'I will confirm after the meeting.',
     captionDebounceMs: 1200,
+    camera: true, // standin-all.js: show answers as slides on your camera
+    openAnswers: true, // answer open questions from your notes (chat and slides) when sure enough
+    slideStepMs: 5000, // each slide of an open answer
+    slideHoldMs: 9000, // how long a finished answer stays on the camera
+    stubOpen: [], // demo answers for open questions when no relay: [{when, confidence, chat, slides, chart}]
     duplicateWindowMs: 15000,
     // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.
     contextPack: '',
@@ -201,6 +206,59 @@
     return { answer: 'unsure', confidence: 40, reason: 'None of my notes cover this.' };
   }
 
+  // Open questions: a short answer for the chat, one to three slides, and optionally a chart.
+  const UNSURE_OPEN = { answer: 'unsure', confidence: 0, reason: 'This is an open question.' };
+  function cut(x, n) { return String(x == null ? '' : x).replace(/\s+/g, ' ').trim().slice(0, n); }
+  function parseOpen(text) {
+    if (!text) return UNSURE_OPEN;
+    const m = String(text).match(/\{[\s\S]*\}/);
+    if (!m) return UNSURE_OPEN;
+    try {
+      const o = JSON.parse(m[0]);
+      if (String(o.answer || '').toLowerCase() !== 'open') return UNSURE_OPEN;
+      let conf = Number(o.confidence);
+      if (!isFinite(conf)) return UNSURE_OPEN;
+      conf = Math.max(0, Math.min(100, Math.round(conf)));
+      const chat = cut(o.chat, 300);
+      const slides = (Array.isArray(o.slides) ? o.slides : []).slice(0, 3)
+        .map(function (s) { return { title: cut(s && s.title, 60), text: cut(s && s.text, 220) }; })
+        .filter(function (s) { return s.title || s.text; });
+      if (!chat || !slides.length) return UNSURE_OPEN;
+      let chart = null;
+      const c = o.chart;
+      if (c && (c.type === 'pie' || c.type === 'bar') && Array.isArray(c.items)) {
+        const items = c.items.slice(0, 6)
+          .map(function (i) { return { label: cut(i && i.label, 30), value: Number(i && i.value) }; })
+          .filter(function (i) { return i.label && isFinite(i.value) && i.value >= 0; });
+        if (items.length >= 2) chart = { type: c.type, title: cut(c.title, 60), items: items };
+      }
+      return { answer: 'open', confidence: conf, reason: chat, chat: chat, slides: slides, chart: chart };
+    } catch (e) {
+      return UNSURE_OPEN;
+    }
+  }
+  function stubOpen(q) {
+    const rules = NS.config.stubOpen || [];
+    for (let i = 0; i < rules.length; i++) {
+      if (new RegExp(rules[i].when, 'i').test(q)) {
+        return parseOpen(JSON.stringify({ answer: 'open', confidence: rules[i].confidence, chat: rules[i].chat, slides: rules[i].slides, chart: rules[i].chart || null }));
+      }
+    }
+    return UNSURE_OPEN;
+  }
+  function buildOpenPrompt(q, recent) {
+    const name = NS.config.userName;
+    const system =
+      'You are the brain of a labelled AI stand-in that attends a meeting for ' + name + '. Someone asked ' + name + ' an open question. ' +
+      'Use only the context pack below. If it does not clearly cover the question, reply {"answer":"unsure","confidence":0}. ' +
+      'Otherwise reply with JSON only: {"answer":"open","confidence":0-100,"chat":"at most 2 short sentences, first person",' +
+      '"slides":[{"title":"at most 6 words","text":"at most 25 words"}],"chart":null or {"type":"pie" or "bar","title":"...","items":[{"label":"...","value":number}]}}. ' +
+      'Use 1 to 3 slides. Add a chart only if the context pack has real numbers for it; never invent numbers. ' +
+      'Confidence is how sure you are that ' + name + ' himself would say this.';
+    const user = 'Context pack:\n' + (NS.config.contextPack || '(empty)') + '\n\nRecent meeting lines:\n' + (recent || '(none)') + '\n\nQuestion for ' + name + ': ' + q;
+    return { model: NS.config.model, max_tokens: 500, system: system, messages: [{ role: 'user', content: user }] };
+  }
+
   function buildPrompt(q, recent) {
     const name = NS.config.userName;
     const system =
@@ -354,6 +412,30 @@
     return stubDecide(q);
   }
 
+  async function decideOpen(q, recent) {
+    const cfg = NS.config;
+    let useRelay = cfg.brain === 'relay';
+    if (!useRelay && cfg.brain === 'stub' && cfg.autoRelay) useRelay = await checkRelay();
+    if (useRelay) {
+      try {
+        const d = await bridgeSend('answer', { question: q, recent: recent || '', userName: cfg.userName }, 25000);
+        return parseOpen(JSON.stringify(d.json));
+      } catch (e) {
+        NS.log('relay failed: ' + e.message);
+        return UNSURE_OPEN;
+      }
+    }
+    if (cfg.brain === 'claude') {
+      try {
+        return parseOpen(await NS.llm(buildOpenPrompt(q, recent)));
+      } catch (e) {
+        NS.log('brain failed: ' + e.message);
+        return UNSURE_OPEN;
+      }
+    }
+    return stubOpen(q);
+  }
+
   // ---- Acting ----
 
   const events = (NS.events = new EventTarget());
@@ -366,7 +448,15 @@
     events.dispatchEvent(new CustomEvent(type, { detail: detail }));
   }
 
-  async function say(text) {
+  async function say(text, meta) {
+    // standin-all.js: the answer goes into the Meet chat and onto the camera as a slide. No face, no voice.
+    if (NS.config.output === 'all') {
+      if (NS.slides && meta) NS.slides.show(meta, text);
+      const p = NS.chat.post(text);
+      NS.lastSpeech = p;
+      await p;
+      return;
+    }
     // Chat-only mode (standin-chat.js): the answer goes into the Meet chat. No face, no voice.
     if (NS.config.output === 'chat') {
       await NS.chat.post(text);
@@ -401,24 +491,28 @@
       emit('question', { question: d.question, kind: d.kind });
       let decision;
       if (d.kind === 'open') {
-        decision = { answer: 'unsure', confidence: 0, reason: 'This is an open question.' };
+        decision = NS.config.openAnswers ? await decideOpen(d.question, recent || '') : UNSURE_OPEN;
       } else {
         decision = await decide(d.question, recent || '');
       }
       const tDecided = performance.now();
       const yes = decision.answer === 'yes' || decision.answer === 'no';
-      const answers = yes && decision.confidence >= NS.config.threshold;
+      const openOK = decision.answer === 'open' && decision.confidence >= NS.config.threshold;
+      const answers = (yes && decision.confidence >= NS.config.threshold) || openOK;
       const result = {
         handled: true,
         question: d.question,
         kind: d.kind,
         decision: decision,
-        action: answers ? (decision.answer === 'yes' ? 'nod' : 'shake') : 'held',
+        action: openOK ? 'answered' : answers ? (decision.answer === 'yes' ? 'nod' : 'shake') : 'held',
         decidedMs: Math.round(tDecided - t0),
         at: NS.isoLocal(),
       };
       let line;
-      if (answers) {
+      if (openOK) {
+        result.open = { slides: decision.slides, chart: decision.chart };
+        line = decision.chat;
+      } else if (answers) {
         if (NS.avatar) NS.avatar.setPose(decision.answer === 'yes' ? 'nod' : 'shake');
         line = (decision.answer === 'yes' ? 'Yes. ' : 'No. ') + decision.reason;
       } else {
@@ -439,7 +533,7 @@
         'decision ' + decision.answer + ' ' + decision.confidence + '% -> ' + result.action + ' in ' + result.actedMs + ' ms'
       );
       emit('decision', result);
-      say(line).catch(function (e) {
+      say(line, result).catch(function (e) {
         NS.log('speech failed: ' + e.message);
       });
       if (result.override === 'asked') {
@@ -482,11 +576,11 @@
         result.action = answer === 'yes' ? 'nod' : 'shake';
         result.decision = { answer: answer, confidence: 100, reason: NS.config.userName + ' answered himself.' };
         emit('decision', result);
-        await say((answer === 'yes' ? 'Yes. ' : 'No. ') + NS.config.userName + ' has confirmed.');
+        await say((answer === 'yes' ? 'Yes. ' : 'No. ') + NS.config.userName + ' has confirmed.', result);
       } else {
         result.override = 'no reply';
         NS.log('override: no answer in time');
-        await say(NS.config.heldLine);
+        await say(NS.config.heldLine, result);
       }
     } catch (e) {
       NS.log('speech failed: ' + e.message);
@@ -497,7 +591,7 @@
   }
 
   NS.ask = NS.handleUtterance; // for typed test questions and tests
-  NS.brain = { detect: detect, parseDecision: parseDecision, buildPrompt: buildPrompt };
+  NS.brain = { detect: detect, parseDecision: parseDecision, buildPrompt: buildPrompt, parseOpen: parseOpen };
 })();
 
 // Reads Meet's live captions from the page. Captions must be switched on in Meet.
@@ -531,6 +625,9 @@
   NS.captions = {
     start: function () {
       if (observer) return;
+      // Whatever was said while paused is not answered afterwards.
+      const el = region();
+      last = el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '';
       observer = new MutationObserver(scan);
       observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
       NS.log('listening to captions');

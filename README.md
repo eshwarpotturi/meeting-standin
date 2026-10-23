@@ -2,6 +2,40 @@
 
 **Demo page:** https://eshwarpotturi.github.io/meeting-standin/
 
+## All-in-one: chat + camera slides + open questions + override (23 Oct 2026)
+
+One file, `standin-all.js`, does everything from Anand's feedback in a single paste. It listens to the Meet captions and, when someone asks you a question by name:
+
+| Heard | Chat | Camera (what others see) |
+|---|---|---|
+| Yes/no, clear from your notes (75%+) | "Yes. / No. + one-line reason" | One big sentence |
+| Yes/no, not sure | "Let me check with Eswar." and a **Yes / No** box appears in your panel for 20 s. Click one: "Yes. Eswar has confirmed." No click: "I will confirm after the meeting." | Same text |
+| **Open question** ("how is the project going?"), notes cover it (75%+) | A 1 to 2 sentence answer | A slideshow of 1 to 3 slides, plus a pie or bar chart when your notes have real numbers |
+| Open question, notes do not cover it | "I will confirm after the meeting." | Same text |
+
+Always: every chat message starts with `[AI stand-in for Eswar]`, the first says it is an AI, and the camera shows "AI stand-in for Eswar" on every slide. No face, no voice. Your real microphone is untouched.
+
+### Use it
+
+1. Start the relay: `brain-test\relay.ps1` (updated: it now has an `/answer` endpoint for open questions). Put your notes in `brain-test\brain-pack.txt`, including any numbers you want charted.
+2. Join the Meet call, switch captions on, open the chat panel once.
+3. Console (F12) on the Meet tab: paste the whole of `standin-all.js`.
+4. **Turn your Meet camera off and on once.** Meet only asks for the camera again then, and that is when it picks up the slide camera.
+5. In the panel (bottom-left): **Connect relay** (allow pop-ups, leave that window open), then test with the **Test question** box, for example `Eswar, how is the project going?`.
+6. Pause, the confidence slider (50 to 95), and the Yes / No override are in the same panel.
+
+Settings (`standin.config`, saved with `standin.save()`): `camera` (false = leave your camera alone), `openAnswers`, `slideStepMs`, `slideHoldMs`, `overrideWaitMs`, `threshold`. Rebuild after editing: `npm run build:all`.
+
+### Tested (mock Meet, no network): `node test/all.mjs`, 43 checks
+
+Camera pixels (idle slide, answer slide, slideshow advancing, pie chart colours, return to idle), real mic kept, chat for yes/no and open, held and low-confidence cases, override Yes / No / timeout, panel (typed question, pause, resume, threshold saved), refusal of malformed model output, and the relay path through a mock of `relay.ps1`. Also fixed: text said while paused is no longer answered on resume.
+
+### Not tested on live Meet yet
+
+The Meet chat selectors ("Chat with everyone", "Send a message"), the caption region, and whether Meet really takes the camera after the off/on. `relay.ps1` `/answer` was not run here (no PowerShell in the build environment); it follows the `/decide` code. If one of these fails, `standin.chatCheck()` and the console log (every line timestamped) say which.
+
+Not done: reading Anand's caption `.md` file as input; "research and get back to me" beyond what is in your notes.
+
 ## v1: chat only (23 Oct 2026)
 
 It listens to the Meet captions. When someone asks you a question by name, it answers in the **Meet chat**. No face, no voice, and it does not touch your camera or microphone. Every message starts with `[AI stand-in for Eswar]`, and the first one says it is an AI.

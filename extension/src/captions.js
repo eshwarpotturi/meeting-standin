@@ -29,6 +29,9 @@
   NS.captions = {
     start: function () {
       if (observer) return;
+      // Whatever was said while paused is not answered afterwards.
+      const el = region();
+      last = el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '';
       observer = new MutationObserver(scan);
       observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
       NS.log('listening to captions');
