@@ -14,7 +14,7 @@ const server = http.createServer((req, res) => {
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}/`;
-let TOTAL = 43; let n = 0; const fails = [];
+let TOTAL = 48; let n = 0; const fails = [];
 function check(name, pass, detail) { n++; if (!pass) fails.push(name); console.log(`${stamp()} [${n}/${TOTAL}] ${pass ? 'PASS' : 'FAIL'} ${name}${detail ? ' (' + detail + ')' : ''}`); }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
@@ -151,6 +151,30 @@ console.log(`${stamp()} --- override ---`);
   await wait(3200);
   m = await msgs(page);
   check('no click in time: falls back to the held line', m.length === 6 && /I will confirm after the meeting\./.test(m[5]), m.slice(4).join(' | '));
+  await page.context().close();
+}
+
+console.log(`${stamp()} --- real Meet caption structure (speaker turns, own speech, transcript file) ---`);
+{
+  const { page } = await session();
+  const turn = (i, sp, t, ms) => page.evaluate(([i, sp, t]) => window.setTurn(i, sp, t), [i, sp, t]).then(() => wait(ms || 1200));
+  await turn(0, 'Priya', 'Hello everyone, let us start.');
+  await turn(1, 'Priya', 'Eswar, did the report go out', 100);
+  await turn(1, 'Priya', 'Eswar, did the report go out today?', 1800);
+  let m = await msgs(page);
+  check('speaker turn: answers a question that grows while being said (once)', m.length === 1 && /Yes\./.test(m[0]), String(m.length));
+  await wait(3200);
+  await turn(2, 'You', 'Eswar, is the report ready?', 1800);
+  check('your own speech (speaker "You") is not answered', (await msgs(page)).length === 1);
+  await turn(3, 'Priya', 'Eswar, how is the project going?', 2500);
+  m = await msgs(page);
+  check('speaker turn: open question works with real structure', m.length === 2 && /pilot is on track/.test(m[1]), m[1]);
+  const md = await page.evaluate(() => window.standin.transcript());
+  check('captions are kept as a markdown transcript with speakers and times', /## Priya \[0:\d\d\]/.test(md) && /## You \[/.test(md) && /did the report go out today\?/.test(md), md.slice(0, 200));
+  const dl = page.waitForEvent('download', { timeout: 4000 }).catch(() => null);
+  await page.click('#standin-save');
+  const d = await dl;
+  check('Save captions button downloads a .md file', !!d && /^meet-captions-.*\.md$/.test(d.suggestedFilename()), d && d.suggestedFilename());
   await page.context().close();
 }
 

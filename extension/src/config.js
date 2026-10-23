@@ -18,6 +18,7 @@
     model: 'claude-sonnet-5-5',
     heldLine: 'I will confirm after the meeting.',
     captionDebounceMs: 1200,
+    ignoreOwnSpeech: true, // do not answer captions from your own mic (speaker "You")
     camera: true, // standin-all.js: show answers as slides on your camera
     openAnswers: true, // answer open questions from your notes (chat and slides) when sure enough
     slideStepMs: 5000, // each slide of an open answer

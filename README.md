@@ -26,9 +26,21 @@ Always: every chat message starts with `[AI stand-in for Eswar]`, the first says
 
 Settings (`standin.config`, saved with `standin.save()`): `camera` (false = leave your camera alone), `openAnswers`, `slideStepMs`, `slideHoldMs`, `overrideWaitMs`, `threshold`. Rebuild after editing: `npm run build:all`.
 
-### Tested (mock Meet, no network): `node test/all.mjs`, 43 checks
+### Tested (mock Meet, no network): `node test/all.mjs`, 48 checks
 
 Camera pixels (idle slide, answer slide, slideshow advancing, pie chart colours, return to idle), real mic kept, chat for yes/no and open, held and low-confidence cases, override Yes / No / timeout, panel (typed question, pause, resume, threshold saved), refusal of malformed model output, and the relay path through a mock of `relay.ps1`. Also fixed: text said while paused is no longer answered on resume.
+
+### Captions: built on Anand's meetcaptions tool
+
+The caption reader now uses the same page structure as his bookmarklet (`tools.s-anand.net/meetcaptions`: the Captions region, one item per speaker turn, speaker name and text), so it knows **who is speaking**:
+
+- It answers a question once the speaker has finished the turn (about 1.2 s after the text stops changing), even if the sentence grew while being said.
+- It ignores your own speech (speaker "You"; `ignoreOwnSpeech`).
+- It keeps a running transcript in his file format (speaker headings with `[m:ss]`, same speaker merged). **Save captions (.md)** in the panel, or `standin.saveTranscript()`, downloads it. The last six turns go to the brain as "recent meeting lines".
+- If Meet changes its layout it falls back to reading the whole caption box as one block.
+- You can still run his bookmarklet alongside it if you want his recording file; the two do not interfere.
+
+His **Meet MP4 Background** bookmarklet works by letting Meet's background picker accept `.mp4`. That is a possible fallback for the camera (pre-made videos, no camera off/on), but the live slide camera here does not need it.
 
 ### Not tested on live Meet yet
 

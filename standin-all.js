@@ -44,6 +44,7 @@
     model: 'claude-sonnet-5-5',
     heldLine: 'I will confirm after the meeting.',
     captionDebounceMs: 1200,
+    ignoreOwnSpeech: true, // do not answer captions from your own mic (speaker "You")
     camera: true, // standin-all.js: show answers as slides on your camera
     openAnswers: true, // answer open questions from your notes (chat and slides) when sure enough
     slideStepMs: 5000, // each slide of an open answer
@@ -595,39 +596,126 @@
 })();
 
 // Reads Meet's live captions from the page. Captions must be switched on in Meet.
-// NOTE: Meet's page layout can change without warning. This looks for any region labelled "captions".
+// Uses the same page structure as Anand's meetcaptions bookmarklet (tools.s-anand.net/meetcaptions):
+// region [role=region][aria-label=Captions], one item per speaker turn (.nMcdL) with the speaker (.NWpY1d) and the text (.ygicle).
+// If Meet changes that layout, it falls back to reading the whole region as one block of text.
+// Meet's page layout can change without warning.
 (function () {
   const NS = (window.__standin = window.__standin || {});
-  let last = '';
-  let timer = null;
+  const SEL = { region: '[role="region"][aria-label="Captions"]', item: '.nMcdL', speaker: '.NWpY1d', text: '.ygicle', avatar: 'img[data-iml], img[src*="googleusercontent.com"]' };
+  const turns = new Map(); // element -> { speaker, text, handled, timer, firstAt }
   let observer = null;
+  let startedAt = Date.now();
+  let blockLast = '';
+  let blockTimer = null;
+  NS.transcript = []; // [{ speaker, text, at }] merged like Anand's file
 
-  function region() {
-    return document.querySelector('[aria-label*="aption" i]');
+  function norm(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+  function regionEl() {
+    const all = Array.from(document.querySelectorAll('[role="region"][aria-label="Captions"], [aria-label*="aption" i]'));
+    return all.find(function (e) { return norm(e.innerText); }) || all[0] || null;
+  }
+  function items() {
+    const r = document.querySelector(SEL.region);
+    if (!r) return [];
+    const byClass = Array.from(r.querySelectorAll(SEL.item));
+    if (byClass.length) return byClass;
+    return Array.from(r.children).filter(function (e) { return e.querySelector(SEL.avatar); });
+  }
+  function readTurn(el) {
+    const sp = el.querySelector(SEL.speaker) || el.querySelector('span');
+    let tx = el.querySelector(SEL.text);
+    if (!tx) {
+      const divs = Array.from(el.children).filter(function (c) { return c.tagName === 'DIV' && !c.querySelector(SEL.avatar); });
+      tx = divs[divs.length - 1];
+    }
+    const speaker = norm(sp && sp.textContent), text = norm(tx && tx.textContent);
+    return speaker && text ? { speaker: speaker, text: text } : null;
+  }
+  function isSelf(speaker) {
+    const s = speaker.toLowerCase();
+    return NS.config.ignoreOwnSpeech !== false && (s === 'you' || s === NS.config.userName.toLowerCase() + ' (you)');
+  }
+
+  // Add to the transcript: same speaker keeps growing one entry (as in Anand's file).
+  function record(speaker, text) {
+    const last = NS.transcript[NS.transcript.length - 1];
+    if (last && last.speaker === speaker) {
+      if (text === last.text || last.text.endsWith(text)) return;
+      if (text.indexOf(last.text) === 0) { last.text = text; return; }
+      last.text += '\n\n' + text;
+      return;
+    }
+    NS.transcript.push({ speaker: speaker, text: text, at: Date.now() - startedAt });
+  }
+  function recentLines() {
+    return NS.transcript.slice(-6).map(function (t) { return t.speaker + ': ' + t.text.replace(/\s+/g, ' ').slice(-300); }).join('\n');
+  }
+  function mmss(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  NS.transcriptMarkdown = function () {
+    const head = '# ' + (norm(document.title.replace(/^Meet\s*[-–]\s*/, '')) || 'Meeting') + '\n\n- **Started**: ' + new Date(startedAt).toLocaleString() + '\n\n---\n';
+    return head + NS.transcript.map(function (t) { return '\n## ' + t.speaker + ' [' + mmss(t.at) + ']\n\n' + t.text + '\n'; }).join('');
+  };
+  NS.downloadTranscript = function () {
+    if (!NS.transcript.length) return false;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([NS.transcriptMarkdown()], { type: 'text/markdown' }));
+    a.download = 'meet-captions-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.md';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+    return true;
+  };
+
+  function fire(speaker, text) {
+    NS.log('caption' + (speaker ? ' (' + speaker + ')' : '') + ': ' + text.slice(-120));
+    NS.handleUtterance(text, recentLines()).catch(function (e) { NS.log('caption handling failed: ' + e.message); });
   }
 
   function scan() {
-    const el = region();
-    if (!el) return;
-    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
-    if (!text || text === last) return;
-    last = text;
-    clearTimeout(timer);
-    // Wait for the speaker to finish before treating it as a question.
-    timer = setTimeout(function () {
-      NS.log('caption: ' + text.slice(-120));
-      NS.handleUtterance(text, text).catch(function (e) {
-        NS.log('caption handling failed: ' + e.message);
+    const list = items();
+    if (list.length) {
+      list.forEach(function (el) {
+        const t = readTurn(el);
+        if (!t) return;
+        let st = turns.get(el);
+        if (!st) { st = { speaker: t.speaker, text: '', handled: '', timer: null }; turns.set(el, st); }
+        if (t.text === st.text) return;
+        st.text = t.text; st.speaker = t.speaker;
+        record(t.speaker, t.text);
+        clearTimeout(st.timer);
+        // Wait for the speaker to finish before treating it as a question.
+        st.timer = setTimeout(function () {
+          if (st.text === st.handled) return;
+          st.handled = st.text;
+          if (isSelf(st.speaker)) return;
+          fire(st.speaker, st.text);
+        }, NS.config.captionDebounceMs);
       });
-    }, NS.config.captionDebounceMs);
+      return;
+    }
+    // Fallback: no turn structure found, read the region as one block.
+    const el = regionEl();
+    if (!el) return;
+    const text = norm(el.innerText);
+    if (!text || text === blockLast) return;
+    blockLast = text;
+    record('', text);
+    clearTimeout(blockTimer);
+    blockTimer = setTimeout(function () { fire('', text); }, NS.config.captionDebounceMs);
   }
 
   NS.captions = {
     start: function () {
       if (observer) return;
-      // Whatever was said while paused is not answered afterwards.
-      const el = region();
-      last = el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '';
+      // Whatever was said before now or while paused is not answered.
+      turns.clear();
+      items().forEach(function (el) {
+        const t = readTurn(el);
+        if (t) turns.set(el, { speaker: t.speaker, text: t.text, handled: t.text, timer: null });
+      });
+      const r = regionEl();
+      blockLast = r && !items().length ? norm(r.innerText) : '';
+      if (!NS.transcript.length) startedAt = Date.now();
       observer = new MutationObserver(scan);
       observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
       NS.log('listening to captions');
@@ -635,7 +723,8 @@
     stop: function () {
       if (observer) observer.disconnect();
       observer = null;
-      clearTimeout(timer);
+      clearTimeout(blockTimer);
+      turns.forEach(function (st) { clearTimeout(st.timer); });
     },
   };
 })();
@@ -928,7 +1017,12 @@
     ovRow.append(yes, no);
     const ov = el('div', 'display:none;margin-top:8px;padding:8px;border:2px solid #a35a00;border-radius:8px'); ov.id = 'standin-override';
     ov.append(ovText, ovRow);
-    host.append(title, status, row1, row2, row3, ov, last);
+    const row4 = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px');
+    const save = el('button', BTN, 'Save captions (.md)'); save.id = 'standin-save';
+    const saved = el('span', 'color:#5a6472;font-size:12px');
+    row4.append(save, saved);
+    save.onclick = function () { saved.textContent = NS.downloadTranscript() ? 'Saved.' : 'No captions yet.'; };
+    host.append(title, status, row1, row2, row3, row4, ov, last);
     document.body.appendChild(host);
     ui = { status: status, toggle: toggle, last: last, ov: ov, ovText: ovText, relay: relay };
 
@@ -962,6 +1056,8 @@
     start: function () { NS.captions.start(); NS.listening = true; drawStatus(); NS.log('listening to captions; answers go to the Meet chat and the camera'); },
     stop: function () { NS.captions.stop(); NS.listening = false; drawStatus(); NS.log('paused'); },
     ask: function (text) { return NS.ask(text, text); },
+    transcript: function () { return NS.transcriptMarkdown(); },
+    saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },
     status: function () { return { listening: !!NS.listening, brain: NS.config.brain, threshold: NS.config.threshold, sent: NS.chat.sent.length, cameraCalls: NS.cameraCalls, slides: NS.slides.state() }; },
     config: NS.config,

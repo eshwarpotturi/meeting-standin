@@ -46,7 +46,12 @@
     ovRow.append(yes, no);
     const ov = el('div', 'display:none;margin-top:8px;padding:8px;border:2px solid #a35a00;border-radius:8px'); ov.id = 'standin-override';
     ov.append(ovText, ovRow);
-    host.append(title, status, row1, row2, row3, ov, last);
+    const row4 = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px');
+    const save = el('button', BTN, 'Save captions (.md)'); save.id = 'standin-save';
+    const saved = el('span', 'color:#5a6472;font-size:12px');
+    row4.append(save, saved);
+    save.onclick = function () { saved.textContent = NS.downloadTranscript() ? 'Saved.' : 'No captions yet.'; };
+    host.append(title, status, row1, row2, row3, row4, ov, last);
     document.body.appendChild(host);
     ui = { status: status, toggle: toggle, last: last, ov: ov, ovText: ovText, relay: relay };
 
@@ -80,6 +85,8 @@
     start: function () { NS.captions.start(); NS.listening = true; drawStatus(); NS.log('listening to captions; answers go to the Meet chat and the camera'); },
     stop: function () { NS.captions.stop(); NS.listening = false; drawStatus(); NS.log('paused'); },
     ask: function (text) { return NS.ask(text, text); },
+    transcript: function () { return NS.transcriptMarkdown(); },
+    saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },
     status: function () { return { listening: !!NS.listening, brain: NS.config.brain, threshold: NS.config.threshold, sent: NS.chat.sent.length, cameraCalls: NS.cameraCalls, slides: NS.slides.state() }; },
     config: NS.config,

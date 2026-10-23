@@ -2,6 +2,8 @@
 <body style="font-family:system-ui;margin:12px">
 <!-- Stands in for Google Meet: captions region, a chat button that opens a chat panel, a message box. -->
 <div id="caps" aria-label="Captions" style="min-height:40px;border:1px solid #ccc"></div>
+<!-- ?real=1: same structure as the real Meet captions (as read by Anand's meetcaptions bookmarklet) -->
+<div id="realcaps" role="region" aria-label="Captions" style="display:none;min-height:40px;border:1px solid #ccc"></div>
 <button id="chatbtn" aria-label="Chat with everyone">Chat</button>
 <div id="panel" style="display:none;border:1px solid #888;padding:8px;margin-top:8px"><div id="msgs"></div></div>
 <script>
@@ -27,6 +29,15 @@ document.getElementById('chatbtn').onclick = () => {
     }
     panel.dataset.built = '1'; panel.style.display = 'block';
   }, 250);
+};
+window.setTurn = (i, speaker, text) => {
+  const r = document.getElementById('realcaps'); r.style.display = 'block';
+  let it = r.children[i];
+  if (!it) { it = document.createElement('div'); it.className = 'nMcdL';
+    const img = document.createElement('img'); img.setAttribute('data-iml', '1'); it.appendChild(img);
+    const sp = document.createElement('div'); sp.className = 'NWpY1d'; it.appendChild(sp);
+    const tx = document.createElement('div'); tx.className = 'ygicle'; it.appendChild(tx); r.appendChild(it); }
+  it.querySelector('.NWpY1d').textContent = speaker; it.querySelector('.ygicle').textContent = text;
 };
 window.setCaption = (t) => { document.getElementById('caps').textContent = t; };
 </script></body></html>
