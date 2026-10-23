@@ -132,6 +132,8 @@
     const endsQ = /\?\s*$/.test(sentence.trim());
     // "Did Eswar send it?" asks about him, not to him.
     if (new RegExp('(^|[,;:\\u2014-]\\s*)' + AUX + '\\s+(' + NS.config.names.join('|') + ')\\b', 'i').test(raw)) return 'none';
+    // "Eswar, did the report go out" with no question mark (live captions often drop it): aux right after the name and a comma is a question.
+    const vocAux = new RegExp('^\\s*(' + NS.config.names.join('|') + ')\\s*,\\s*' + AUX + '\\b', 'i').test(raw);
     if (OPEN_PHRASES.test(core)) return 'open';
     if (clauses.some(function (c) { return WH_RE.test(c); })) return 'open';
     if (
@@ -139,7 +141,7 @@
       clauses.some(function (c) {
         if (!AUX_RE.test(c)) return false;
         // "has the latest numbers" is a statement unless it ends with a question mark.
-        return endsQ || !DET_RE.test(c);
+        return endsQ || vocAux || !DET_RE.test(c);
       })
     ) return 'yesno';
     return endsQ ? 'open' : 'none';
