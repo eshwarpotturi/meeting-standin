@@ -1,0 +1,32 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Meet mock</title></head>
+<body style="font-family:system-ui;margin:12px">
+<!-- Stands in for Google Meet: captions region, a chat button that opens a chat panel, a message box. -->
+<div id="caps" aria-label="Captions" style="min-height:40px;border:1px solid #ccc"></div>
+<button id="chatbtn" aria-label="Chat with everyone">Chat</button>
+<div id="panel" style="display:none;border:1px solid #888;padding:8px;margin-top:8px"><div id="msgs"></div></div>
+<script>
+const enterOnly = location.search.includes('enter=1');
+const panel = document.getElementById('panel'), msgs = document.getElementById('msgs');
+window.sentMessages = [];
+function send(ta) {
+  const v = ta.value.trim(); if (!v) return;
+  window.sentMessages.push(v);
+  const d = document.createElement('div'); d.textContent = v; msgs.appendChild(d);
+  ta.value = '';
+}
+document.getElementById('chatbtn').onclick = () => {
+  if (panel.dataset.built) { panel.style.display = 'block'; return; }
+  setTimeout(() => {
+    const ta = document.createElement('textarea'); ta.setAttribute('aria-label', 'Send a message'); ta.setAttribute('placeholder', 'Send a message');
+    panel.appendChild(ta);
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && enterOnly) { e.preventDefault(); send(ta); } });
+    if (!enterOnly) {
+      const b = document.createElement('button'); b.setAttribute('aria-label', 'Send a message'); b.textContent = 'Send'; b.disabled = true;
+      ta.addEventListener('input', () => { b.disabled = !ta.value.trim(); });
+      b.onclick = () => send(ta); panel.appendChild(b);
+    }
+    panel.dataset.built = '1'; panel.style.display = 'block';
+  }, 250);
+};
+window.setCaption = (t) => { document.getElementById('caps').textContent = t; };
+</script></body></html>

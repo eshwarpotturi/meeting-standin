@@ -298,6 +298,11 @@
   }
 
   async function say(text) {
+    // Chat-only mode (standin-chat.js): the answer goes into the Meet chat. No face, no voice.
+    if (NS.config.output === 'chat') {
+      await NS.chat.post(text);
+      return;
+    }
     NS.avatar.setSubtitle(text);
     const p = NS.speak(text);
     NS.lastSpeech = p;
@@ -345,7 +350,7 @@
       };
       let line;
       if (answers) {
-        NS.avatar.setPose(decision.answer === 'yes' ? 'nod' : 'shake');
+        if (NS.avatar) NS.avatar.setPose(decision.answer === 'yes' ? 'nod' : 'shake');
         line = (decision.answer === 'yes' ? 'Yes. ' : 'No. ') + decision.reason;
       } else {
         const askYou = NS.config.override && d.kind !== 'open';
@@ -403,7 +408,7 @@
     try {
       if (answer === 'yes' || answer === 'no') {
         NS.log('override: ' + answer);
-        NS.avatar.setPose(answer === 'yes' ? 'nod' : 'shake');
+        if (NS.avatar) NS.avatar.setPose(answer === 'yes' ? 'nod' : 'shake');
         result.override = answer;
         result.action = answer === 'yes' ? 'nod' : 'shake';
         result.decision = { answer: answer, confidence: 100, reason: NS.config.userName + ' answered himself.' };
