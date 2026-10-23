@@ -42,7 +42,25 @@ The caption reader now uses the same page structure as his bookmarklet (`tools.s
 
 His **Meet MP4 Background** bookmarklet works by letting Meet's background picker accept `.mp4`. That is a possible fallback for the camera (pre-made videos, no camera off/on), but the live slide camera here does not need it.
 
-### Not tested on live Meet yet
+### Tested on live Google Meet (23 Oct 2026, 15:18 to 15:28 IST, Chrome, alone in a call)
+
+| Part | Result |
+|---|---|
+| Load the script in Meet (Trusted Types rule) | Works |
+| Chat button "Chat with everyone" and box "Send a message" | Found; messages posted and labelled |
+| Slide camera, one sentence | Works (self-view is mirrored; others see it the right way round) |
+| Slideshow, 3 frames, back to idle | Works |
+| Camera taken on the join screen | Works. **Best way:** load the script on the join screen, switch the camera off and on, then press Join now. |
+| Caption region `[role=region][aria-label=Captions]` | Found; turns read with speaker "You" |
+| Caption turn, no question mark, then answered in chat and on camera | Works after two fixes below |
+| Meet blur | **Blurs the whole slide.** Fixed by choosing no effect in Backgrounds and effects. |
+| Relay (`relay.ps1`), voice, real Meet speech from other people | Not testable here (no PowerShell, no second person) |
+
+Bugs found live and fixed: (1) the caption settings button text ("settings") was read as a caption; (2) "Eswar, did the report go out today" without a question mark was not treated as a question; Meet often leaves it off while a turn is still growing. Captions are scored after 1.2 s of silence either way.
+
+Live tests used typed text placed in the real caption box, because the stand-in cannot make Meet transcribe speech from a quiet room.
+
+### Still untested on live Meet
 
 The Meet chat selectors ("Chat with everyone", "Send a message"), the caption region, and whether Meet really takes the camera after the off/on. `relay.ps1` `/answer` was not run here (no PowerShell in the build environment); it follows the `/decide` code. If one of these fails, `standin.chatCheck()` and the console log (every line timestamped) say which.
 
