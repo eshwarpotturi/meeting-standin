@@ -1,5 +1,7 @@
 # AI stand-in for meetings
 
+**Demo page:** https://eshwarpotturi.github.io/meeting-standin/
+
 ## v1: chat only (23 Oct 2026)
 
 It listens to the Meet captions. When someone asks you a question by name, it answers in the **Meet chat**. No face, no voice, and it does not touch your camera or microphone. Every message starts with `[AI stand-in for Eswar]`, and the first one says it is an AI.
