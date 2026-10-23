@@ -613,7 +613,13 @@
   function norm(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
   function regionEl() {
     const all = Array.from(document.querySelectorAll('[role="region"][aria-label="Captions"], [aria-label*="aption" i]'));
-    return all.find(function (e) { return norm(e.innerText); }) || all[0] || null;
+    return all.find(function (e) { return cleanText(e); }) || all[0] || null;
+  }
+  // Text of a region without its buttons and icons (Meet's caption settings button reads "settings" otherwise).
+  function cleanText(el) {
+    const c = el.cloneNode(true);
+    c.querySelectorAll('button, [role="button"], i, svg, [aria-hidden="true"]').forEach(function (e) { e.remove(); });
+    return norm(c.textContent);
   }
   function items() {
     const r = document.querySelector(SEL.region);
@@ -696,7 +702,7 @@
     // Fallback: no turn structure found, read the region as one block.
     const el = regionEl();
     if (!el) return;
-    const text = norm(el.innerText);
+    const text = cleanText(el);
     if (!text || text === blockLast) return;
     blockLast = text;
     record('', text);
@@ -714,7 +720,7 @@
         if (t) turns.set(el, { speaker: t.speaker, text: t.text, handled: t.text, timer: null });
       });
       const r = regionEl();
-      blockLast = r && !items().length ? norm(r.innerText) : '';
+      blockLast = r && !items().length ? cleanText(r) : '';
       if (!NS.transcript.length) startedAt = Date.now();
       observer = new MutationObserver(scan);
       observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });

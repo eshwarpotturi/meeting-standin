@@ -20,7 +20,7 @@ Always: every chat message starts with `[AI stand-in for Eswar]`, the first says
 1. Start the relay: `brain-test\relay.ps1` (updated: it now has an `/answer` endpoint for open questions). Put your notes in `brain-test\brain-pack.txt`, including any numbers you want charted.
 2. Join the Meet call, switch captions on, open the chat panel once.
 3. Console (F12) on the Meet tab: paste the whole of `standin-all.js`.
-4. **Turn your Meet camera off and on once.** Meet only asks for the camera again then, and that is when it picks up the slide camera.
+4. **Turn your Meet camera off and on once.** Meet only asks for the camera again then, and that is when it picks up the slide camera. Also open **Backgrounds and effects** and make sure **blur is off**: Meet sees no person in the slide picture and blurs the whole slide (found in the live Meet test).
 5. In the panel (bottom-left): **Connect relay** (allow pop-ups, leave that window open), then test with the **Test question** box, for example `Eswar, how is the project going?`.
 6. Pause, the confidence slider (50 to 95), and the Yes / No override are in the same panel.
 
