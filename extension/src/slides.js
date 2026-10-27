@@ -5,7 +5,7 @@
   const W = 1280, H = 720;
   const PAL = ['#2f6fe4', '#e0782a', '#2a9d6f', '#a74fd0', '#c9a227', '#d6455d'];
   let canvas = null, ctx = null, stream = null, timer = null, hideTimer = null;
-  const S = { frames: [], i: 0, since: 0, mode: 'idle', shown: 0 };
+  const S = { frames: [], i: 0, since: 0, mode: 'idle', shown: 0, step: 0 };
 
   function init() {
     if (canvas) return;
@@ -39,7 +39,83 @@
     return { px: 32, font: f, lines: wrap(text, maxW, f).slice(0, Math.floor(maxH / 38)) };
   }
 
+
+  // Round axis values (1, 2, 5 times a power of ten) so the grid reads as 0, 5, 10, 15 and not 6.7, 11.4.
+  function niceScale(lo, hi, n) {
+    const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+    const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+    return { lo: Math.floor(lo / step + 1e-9) * step, hi: Math.ceil(hi / step - 1e-9) * step, step: step };
+  }
+  // 1,400,000,000 -> "1.4B"; 12,500 -> "12.5K"; small numbers keep their decimals.
+  function short(v, dec) {
+    const a = Math.abs(v), t = function (x, u) { return String(Math.round(x * 100) / 100) + u; };
+    if (a >= 1e9) return t(v / 1e9, 'B');
+    if (a >= 1e6) return t(v / 1e6, 'M');
+    if (a >= 1e4) return t(v / 1e3, 'K');
+    return dec == null ? String(Math.round(v * 100) / 100) : v.toFixed(dec);
+  }
+  NS.shortNumber = short;
+
+  // Line chart for a time series: one to three series, shared x labels (years), unit on the right of the legend row.
+  function drawLine(c, x, y, w, h) {
+    const series = c.series || [];
+    const labels = [];
+    series.forEach(function (s) { s.points.forEach(function (p) { if (labels.indexOf(p.label) < 0) labels.push(p.label); }); });
+    labels.sort();
+    let lo = Infinity, hi = -Infinity;
+    series.forEach(function (s) { s.points.forEach(function (p) { lo = Math.min(lo, p.value); hi = Math.max(hi, p.value); }); });
+    if (!isFinite(lo)) return;
+    if (lo > 0 && hi / lo > 3) lo = 0;
+    if (hi === lo) { hi += 1; lo -= 1; }
+    const sc = niceScale(lo, hi, 4);
+    lo = sc.lo; hi = sc.hi;
+    const dec = sc.step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(sc.step)));
+    const left = x + 120, right = x + w - 110, top = y + 40, bottom = y + h - 50;
+    const px = function (label) { return labels.length < 2 ? (left + right) / 2 : left + (right - left) * labels.indexOf(label) / (labels.length - 1); };
+    const py = function (v) { return bottom - (bottom - top) * (v - lo) / (hi - lo); };
+    ctx.textBaseline = 'middle';
+    ctx.font = '600 26px system-ui, sans-serif';
+    for (let v = lo; v <= hi + sc.step / 2; v += sc.step) {
+      const gy = py(v);
+      ctx.strokeStyle = '#c9d0da'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(left, gy); ctx.lineTo(right, gy); ctx.stroke();
+      ctx.fillStyle = '#5a6472'; ctx.textAlign = 'right';
+      ctx.fillText(short(v, dec), left - 12, gy);
+    }
+    // x labels: about 8 of them, always the last one; skip a label that would sit next to the last.
+    const every = Math.max(1, Math.ceil(labels.length / 8));
+    ctx.textAlign = 'center'; ctx.fillStyle = '#5a6472';
+    labels.forEach(function (l, k) {
+      const last = k === labels.length - 1;
+      if (last || (k % every === 0 && labels.length - 1 - k >= every)) ctx.fillText(l, px(l), bottom + 28);
+    });
+    series.forEach(function (s, k) {
+      const col = PAL[k % PAL.length];
+      const pts = s.points.slice().sort(function (a, b) { return a.label < b.label ? -1 : 1; });
+      ctx.strokeStyle = col; ctx.lineWidth = 6; ctx.lineJoin = 'round'; ctx.beginPath();
+      pts.forEach(function (p, i) { if (i) ctx.lineTo(px(p.label), py(p.value)); else ctx.moveTo(px(p.label), py(p.value)); });
+      ctx.stroke();
+      ctx.fillStyle = col;
+      pts.forEach(function (p) { ctx.beginPath(); ctx.arc(px(p.label), py(p.value), 7, 0, Math.PI * 2); ctx.fill(); });
+      const lp = pts[pts.length - 1];
+      ctx.textAlign = 'left'; ctx.font = '700 28px system-ui, sans-serif';
+      ctx.fillText(short(lp.value), px(lp.label) + 14, py(lp.value));
+      ctx.font = '600 26px system-ui, sans-serif';
+    });
+    if (series.length > 1 || c.unit) {
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let lx = left;
+      if (series.length > 1) series.forEach(function (s, k) {
+        ctx.fillStyle = PAL[k % PAL.length]; ctx.fillRect(lx, y + 4, 24, 24);
+        ctx.fillStyle = '#14181f'; ctx.font = '600 26px system-ui, sans-serif';
+        ctx.fillText(s.name, lx + 34, y + 16);
+        lx += 34 + ctx.measureText(s.name).width + 36;
+      });
+      if (c.unit) { ctx.textAlign = 'right'; ctx.fillStyle = '#5a6472'; ctx.font = '600 26px system-ui, sans-serif'; ctx.fillText(c.unit, x + w, y + 16); }
+    }
+  }
+
   function drawChart(c, x, y, w, h) {
+    if (c.type === 'line') return drawLine(c, x, y, w, h);
     const total = c.items.reduce(function (a, i) { return a + i.value; }, 0) || 1;
     if (c.type === 'pie') {
       const r = Math.min(h, w * 0.5) / 2 - 10, cx = x + r + 10, cy = y + h / 2;
@@ -78,8 +154,12 @@
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     if (f.kind === 'chart') {
       ctx.fillStyle = '#14181f'; ctx.font = '700 52px system-ui, sans-serif';
-      ctx.fillText(f.chart.title || f.title || '', 70, 120);
-      drawChart(f.chart, 70, 170, W - 140, 440);
+      ctx.fillText(String(f.chart.title || f.title || '').slice(0, 52), 70, 110);
+      drawChart(f.chart, 70, 150, W - 140, f.chart.source ? 430 : 480);
+      if (f.chart.source) {
+        ctx.fillStyle = '#5a6472'; ctx.font = '600 24px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        ctx.fillText(String(f.chart.source).slice(0, 95), 70, H - 90);
+      }
     } else {
       let y = 130;
       if (f.title) {
@@ -105,7 +185,7 @@
 
   function draw() {
     if (!ctx) return;
-    const step = NS.config.slideStepMs || 5000;
+    const step = S.step || NS.config.slideStepMs || 5000;
     if (S.mode === 'show' && S.frames.length > 1 && S.i < S.frames.length - 1 && Date.now() - S.since >= step) {
       S.i++; S.since = Date.now();
     }
@@ -131,12 +211,24 @@
     show: function (result, text) {
       init();
       S.frames = framesFor(result, text);
-      S.i = 0; S.since = Date.now(); S.mode = 'show'; S.shown++;
+      S.i = 0; S.since = Date.now(); S.mode = 'show'; S.shown++; S.step = 0;
       const total = (NS.config.slideStepMs || 5000) * (S.frames.length - 1) + (NS.config.slideHoldMs || 9000);
       clearTimeout(hideTimer);
       hideTimer = setTimeout(function () { S.mode = 'idle'; }, total);
       draw();
       NS.log('camera slide: ' + S.frames.length + ' frame(s)');
+    },
+    // Show ready-made frames (used by the data chart). opts: { stepMs, holdMs }
+    showFrames: function (frames, opts) {
+      init();
+      opts = opts || {};
+      S.frames = frames; S.i = 0; S.since = Date.now(); S.mode = 'show'; S.shown++; S.step = opts.stepMs || 0;
+      const step = opts.stepMs || NS.config.slideStepMs || 5000;
+      const total = step * (frames.length - 1) + (opts.holdMs || NS.config.slideHoldMs || 9000);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () { S.mode = 'idle'; }, total);
+      draw();
+      NS.log('camera frames: ' + frames.length);
     },
     clear: function () { clearTimeout(hideTimer); S.mode = 'idle'; draw(); },
     state: function () { return { mode: S.mode, i: S.i, frames: S.frames.length, shown: S.shown }; },

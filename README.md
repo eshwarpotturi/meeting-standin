@@ -2,6 +2,48 @@
 
 **Demo page:** https://eshwarpotturi.github.io/meeting-standin/
 
+## Data chart: say a phrase, the camera shows public data (27 Oct 2026)
+
+While you explain something, say **"stand-in, chart India GDP growth since 2018"**. The stand-in looks up public data, then shows a chart on your camera in place of the slides, with its source written on the slide. Then it shows a one-line summary. It also posts one labelled line with the source in the Meet chat.
+
+Other ways to say it: "Eswar, show me the data on ..." and "stand-in, plot ..." / "graph ...". Only your own speech starts it. Anyone else saying it is ignored. To chart from the panel or console: type the phrase in the test box, or `standin.chart('India GDP growth since 2018')`. **Clear camera** in the panel puts the idle slide back at once.
+
+### How it finds the data
+
+| Step | What happens | Where |
+|---|---|---|
+| 1 Plan | The model picks where to look. It chooses a World Bank indicator, or a Wikipedia search. It never supplies numbers | `/llm` on the relay |
+| 2 Fetch | The relay downloads the data. Only `api.worldbank.org` and `en.wikipedia.org` are allowed (HTTPS, GET, 4 MB cap) | `/fetch` on the relay |
+| 3 Check | World Bank: the plan is validated, empty years dropped. Wikipedia: every number must come with the exact words from the page, and the number must be in those words. One miss rejects the whole chart | In the Meet tab |
+| 4 Show | Line chart (years) or bar chart (names), source on the slide, then a summary worked out from the numbers (peak, latest, change since the start). Not written by the model | Camera |
+| 5 Chat | One labelled line: title, source, summary | Meet chat |
+
+If the World Bank has nothing usable, it falls back to Wikipedia. If neither gives checked numbers, the camera says "No reliable data found" and nothing is posted. Every log line has a timestamp and step `n/5`.
+
+Settings (`standin.config`): `dataChart` (false = off), `chartHoldMs`, `chartStepMs`, `chartChat`, `chartMinPoints`, `chartRepeatMs` (the same topic is not charted again from speech for 5 minutes).
+
+### Use it
+
+Same as the all-in-one steps below, but update the relay first: the new `brain-test\relay.ps1` has `/llm` and `/fetch`. Restart it, press **Connect relay**, then say or type the phrase. Without the relay the camera says "Data lookup is off".
+
+### Tested: `node test/datachart.mjs`, 39 checks (mock Meet page and mock relay, no network)
+
+Phrase detection (hyphen or not, filler words, last request wins, ordinary talk ignored), plan checks (bad indicator, country code, too many countries, bad years), the Wikipedia grounding check, the full World Bank path (right URL, empty year dropped, source on the slide, summary, chart pixels on the camera, chat line, timestamped steps), other people's speech ignored, repeat topics ignored, fallback to Wikipedia, a bar chart for names, a refused chart for a number not on the page, only the two allowed hosts requested, no relay, and the off switch. `npm test` runs every suite.
+
+### Not tested yet (be clear about this)
+
+- **The new relay endpoints** `/llm` and `/fetch` in `relay.ps1`. There is no PowerShell in the build environment, so they follow the existing `/decide` code but have not been run. The mock relay in the test is JavaScript.
+- **Live Meet with a second person**, and real captions of your own speech (speaker "You") triggering the phrase.
+- **Real World Bank and Wikipedia replies.** The test data is made up. Check one real topic first, for example "stand-in, chart India GDP growth since 2018".
+- **The model's choice of indicator.** If it picks a wrong or retired code, the World Bank returns nothing and it falls back to Wikipedia.
+
+### Limits
+
+- The fallback is a Wikipedia search, not general web search. Many topics have no checkable table there.
+- The chart appears with no approval step (your choice). Safeguards: the source is on the slide and in the chat, only checked numbers are drawn, and **Clear camera** removes it.
+- The summary describes the numbers. A non-obvious insight comes from choosing a good topic, not from the tool.
+- World Bank data lags by a year or more.
+
 ## All-in-one: chat + camera slides + open questions + override (23 Oct 2026)
 
 One file, `standin-all.js`, does everything from Anand's feedback in a single paste. It listens to the Meet captions and, when someone asks you a question by name:

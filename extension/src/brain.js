@@ -301,6 +301,9 @@
     NS.log(relayUp ? 'relay found: live brain on' : 'relay not found: using demo answers');
     return relayUp;
   }
+  // For other modules (the data chart): ask the relay for anything, and check it is up.
+  NS.relayCall = function (kind, body, ms) { return bridgeSend(kind, body, ms || 20000); };
+  NS.relayReady = function () { return checkRelay(); };
   async function relayDecide(q, recent) {
     const d = await bridgeSend('decide', { question: q, recent: recent || '', userName: NS.config.userName }, 12000);
     return parseDecision(JSON.stringify(d.json));

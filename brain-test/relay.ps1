@@ -37,6 +37,23 @@ function Answer($question, $recent, $name) {
   if ($text -match "\{[\s\S]*\}") { return $Matches[0] }
   return '{"answer":"unsure","confidence":0}'
 }
+# Data chart: a plain model call, and a download that is allowed only from these public hosts (HTTPS, port 443, GET).
+$FetchHosts = @("api.worldbank.org", "en.wikipedia.org")
+function Llm($system, $user, $maxTokens) {
+  $tokens = 900; if ($maxTokens) { $tokens = [int]$maxTokens }
+  $body = @{ model = $Model; temperature = 0; max_tokens = $tokens; messages = @(@{ role = "system"; content = $system }, @{ role = "user"; content = $user }) } | ConvertTo-Json -Depth 6
+  $r = Invoke-RestMethod -Uri "$Base/openai/v1/chat/completions" -Method Post -TimeoutSec 30 -ContentType "application/json; charset=utf-8" `
+    -Headers @{ Authorization = "Bearer ${token}:meeting-standin" } -Body ([Text.Encoding]::UTF8.GetBytes($body))
+  return [string]$r.choices[0].message.content
+}
+function PublicFetch($url) {
+  $u = [Uri]$url
+  if ($u.Scheme -ne "https" -or -not $u.IsDefaultPort -or ($FetchHosts -notcontains $u.Host)) { throw "host not allowed: $($u.Host)" }
+  $r = Invoke-WebRequest -Uri $u.AbsoluteUri -Method Get -UseBasicParsing -TimeoutSec 20 -Headers @{ "User-Agent" = "meeting-standin/0.1 (public data lookup)" }
+  $text = [string]$r.Content
+  if ($text.Length -gt 4000000) { throw "response too large" }
+  return @{ status = [int]$r.StatusCode; body = $text }
+}
 Add-Type -AssemblyName System.Speech
 function Speak($text) {
   $tmp = [IO.Path]::Combine([IO.Path]::GetTempPath(), "standin-" + [guid]::NewGuid().ToString("N") + ".wav")
@@ -80,6 +97,20 @@ while ($listener.IsListening) {
       $out = Answer $in.question $in.recent $in.userName
       Log ("open question {0}: {1} -> {2} ({3} ms)" -f $n, $in.question, ($out -replace "\s+", " "), $sw.ElapsedMilliseconds)
       Send $res 200 $out; continue
+    }
+    if ($req.Url.AbsolutePath -eq "/llm" -and $req.HttpMethod -eq "POST") {
+      $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json
+      $n++; $sw = [Diagnostics.Stopwatch]::StartNew()
+      $text = Llm $in.system $in.user $in.maxTokens
+      Log ("llm {0}: {1} chars ({2} ms)" -f $n, $text.Length, $sw.ElapsedMilliseconds)
+      Send $res 200 (@{ text = $text } | ConvertTo-Json -Compress); continue
+    }
+    if ($req.Url.AbsolutePath -eq "/fetch" -and $req.HttpMethod -eq "POST") {
+      $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json
+      $n++; $sw = [Diagnostics.Stopwatch]::StartNew()
+      $out = PublicFetch ([string]$in.url)
+      Log ("fetch {0}: {1} -> {2}, {3} chars ({4} ms)" -f $n, $in.url, $out.status, $out.body.Length, $sw.ElapsedMilliseconds)
+      Send $res 200 ($out | ConvertTo-Json -Compress -Depth 3); continue
     }
     if ($req.Url.AbsolutePath -eq "/tts" -and $req.HttpMethod -eq "POST") {
       $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json

@@ -25,6 +25,13 @@
     slideHoldMs: 9000, // how long a finished answer stays on the camera
     stubOpen: [], // demo answers for open questions when no relay: [{when, confidence, chat, slides, chart}]
     duplicateWindowMs: 15000,
+    // Data chart: say "stand-in, chart <topic>" and the camera shows a chart of public data, with its source.
+    dataChart: true,
+    chartHoldMs: 20000, // how long the chart stays on the camera
+    chartStepMs: 9000, // chart, then a one-line summary
+    chartChat: true, // also post one labelled line with the source in the Meet chat
+    chartRepeatMs: 300000, // the same topic is not charted again from speech for this long (standin.chart() always works)
+    chartMinPoints: 3, // fewer data points than this is not charted
     // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.
     contextPack: '',
     stubRules: [],

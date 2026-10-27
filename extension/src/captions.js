@@ -96,7 +96,11 @@
         st.timer = setTimeout(function () {
           if (st.text === st.handled) return;
           st.handled = st.text;
-          if (isSelf(st.speaker)) return;
+          if (isSelf(st.speaker)) {
+            // Your own speech is never answered as a question, but "stand-in, chart <topic>" shows a chart.
+            if (NS.dataChart) NS.dataChart.handleSpeech(st.text);
+            return;
+          }
           fire(st.speaker, st.text);
         }, NS.config.captionDebounceMs);
       });
@@ -110,7 +114,11 @@
     blockLast = text;
     record('', text);
     clearTimeout(blockTimer);
-    blockTimer = setTimeout(function () { fire('', text); }, NS.config.captionDebounceMs);
+    blockTimer = setTimeout(function () {
+      // No speaker names in this layout, so a chart phrase is accepted from anyone in the caption box.
+      if (NS.dataChart && NS.dataChart.handleSpeech(text)) return;
+      fire('', text);
+    }, NS.config.captionDebounceMs);
   }
 
   NS.captions = {

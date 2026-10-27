@@ -51,6 +51,13 @@
     slideHoldMs: 9000, // how long a finished answer stays on the camera
     stubOpen: [], // demo answers for open questions when no relay: [{when, confidence, chat, slides, chart}]
     duplicateWindowMs: 15000,
+    // Data chart: say "stand-in, chart <topic>" and the camera shows a chart of public data, with its source.
+    dataChart: true,
+    chartHoldMs: 20000, // how long the chart stays on the camera
+    chartStepMs: 9000, // chart, then a one-line summary
+    chartChat: true, // also post one labelled line with the source in the Meet chat
+    chartRepeatMs: 300000, // the same topic is not charted again from speech for this long (standin.chart() always works)
+    chartMinPoints: 3, // fewer data points than this is not charted
     // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.
     contextPack: '',
     stubRules: [],
@@ -376,6 +383,9 @@
     NS.log(relayUp ? 'relay found: live brain on' : 'relay not found: using demo answers');
     return relayUp;
   }
+  // For other modules (the data chart): ask the relay for anything, and check it is up.
+  NS.relayCall = function (kind, body, ms) { return bridgeSend(kind, body, ms || 20000); };
+  NS.relayReady = function () { return checkRelay(); };
   async function relayDecide(q, recent) {
     const d = await bridgeSend('decide', { question: q, recent: recent || '', userName: NS.config.userName }, 12000);
     return parseDecision(JSON.stringify(d.json));
@@ -695,7 +705,11 @@
         st.timer = setTimeout(function () {
           if (st.text === st.handled) return;
           st.handled = st.text;
-          if (isSelf(st.speaker)) return;
+          if (isSelf(st.speaker)) {
+            // Your own speech is never answered as a question, but "stand-in, chart <topic>" shows a chart.
+            if (NS.dataChart) NS.dataChart.handleSpeech(st.text);
+            return;
+          }
           fire(st.speaker, st.text);
         }, NS.config.captionDebounceMs);
       });
@@ -709,7 +723,11 @@
     blockLast = text;
     record('', text);
     clearTimeout(blockTimer);
-    blockTimer = setTimeout(function () { fire('', text); }, NS.config.captionDebounceMs);
+    blockTimer = setTimeout(function () {
+      // No speaker names in this layout, so a chart phrase is accepted from anyone in the caption box.
+      if (NS.dataChart && NS.dataChart.handleSpeech(text)) return;
+      fire('', text);
+    }, NS.config.captionDebounceMs);
   }
 
   NS.captions = {

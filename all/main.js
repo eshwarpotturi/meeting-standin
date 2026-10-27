@@ -35,7 +35,7 @@
     row2.append(el('span', '', 'Answer at'), thr, thrv);
     const row3 = el('div', 'display:flex;gap:8px;margin-top:8px');
     const q = el('input', 'flex:1;min-width:0;padding:6px;border:1px solid #d9dee6;border-radius:6px'); q.type = 'text'; q.id = 'standin-q';
-    q.placeholder = 'Test question'; q.setAttribute('aria-label', 'Test question');
+    q.placeholder = 'Test question or: stand-in, chart ...'; q.setAttribute('aria-label', 'Test question');
     const ask = el('button', BTN, 'Ask'); ask.id = 'standin-ask';
     row3.append(q, ask);
     const last = el('div', 'margin-top:8px;font-size:13px'); last.id = 'standin-last';
@@ -46,10 +46,12 @@
     ovRow.append(yes, no);
     const ov = el('div', 'display:none;margin-top:8px;padding:8px;border:2px solid #a35a00;border-radius:8px'); ov.id = 'standin-override';
     ov.append(ovText, ovRow);
-    const row4 = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px');
+    const row4 = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap');
     const save = el('button', BTN, 'Save captions (.md)'); save.id = 'standin-save';
     const saved = el('span', 'color:#5a6472;font-size:12px');
-    row4.append(save, saved);
+    const clear = el('button', BTN, 'Clear camera'); clear.id = 'standin-clear';
+    row4.append(save, clear, saved);
+    clear.onclick = function () { NS.slides.clear(); saved.textContent = 'Camera cleared.'; };
     save.onclick = function () { saved.textContent = NS.downloadTranscript() ? 'Saved.' : 'No captions yet.'; };
     host.append(title, status, row1, row2, row3, row4, ov, last);
     document.body.appendChild(host);
@@ -60,6 +62,9 @@
     thr.oninput = function () { NS.config.threshold = Number(thr.value); thrv.textContent = thr.value + '%'; NS.saveConfig(); };
     ask.onclick = function () {
       const v = q.value.trim(); if (!v) return;
+      // A chart phrase typed here, for example: stand-in, chart India GDP growth
+      const topic = NS.dataChart.detect(v);
+      if (topic) { last.textContent = 'Looking up: ' + topic; NS.dataChart.run(topic); return; }
       NS.ask(v, '').then(function (r) {
         if (!r.handled) last.textContent = 'Ignored (' + r.reason + '). Start with your name, for example: "' + NS.config.userName + ', how is the project going?"';
       });
@@ -73,6 +78,7 @@
       const label = r.action === 'held' ? 'Held for you' : r.action === 'answered' ? 'Answered (open)' : r.decision.answer.toUpperCase();
       last.textContent = label + ' · ' + r.decision.confidence + '% · ' + r.question;
     });
+    NS.events.addEventListener('chart', function (ev) { last.textContent = 'Chart shown · ' + ev.detail.chart.title + ' · ' + ev.detail.chart.source; });
     drawStatus();
   }
   function drawStatus() {
@@ -85,10 +91,12 @@
     start: function () { NS.captions.start(); NS.listening = true; drawStatus(); NS.log('listening to captions; answers go to the Meet chat and the camera'); },
     stop: function () { NS.captions.stop(); NS.listening = false; drawStatus(); NS.log('paused'); },
     ask: function (text) { return NS.ask(text, text); },
+    // Show a chart of public data on the camera now, for example standin.chart('India GDP growth since 2015').
+    chart: function (topic) { return NS.dataChart.run(topic); },
     transcript: function () { return NS.transcriptMarkdown(); },
     saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },
-    status: function () { return { listening: !!NS.listening, brain: NS.config.brain, threshold: NS.config.threshold, sent: NS.chat.sent.length, cameraCalls: NS.cameraCalls, slides: NS.slides.state() }; },
+    status: function () { return { listening: !!NS.listening, brain: NS.config.brain, threshold: NS.config.threshold, sent: NS.chat.sent.length, charts: NS.chartHistory.length, cameraCalls: NS.cameraCalls, slides: NS.slides.state() }; },
     config: NS.config,
     save: NS.saveConfig,
   };

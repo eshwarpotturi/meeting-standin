@@ -51,6 +51,13 @@
     slideHoldMs: 9000, // how long a finished answer stays on the camera
     stubOpen: [], // demo answers for open questions when no relay: [{when, confidence, chat, slides, chart}]
     duplicateWindowMs: 15000,
+    // Data chart: say "stand-in, chart <topic>" and the camera shows a chart of public data, with its source.
+    dataChart: true,
+    chartHoldMs: 20000, // how long the chart stays on the camera
+    chartStepMs: 9000, // chart, then a one-line summary
+    chartChat: true, // also post one labelled line with the source in the Meet chat
+    chartRepeatMs: 300000, // the same topic is not charted again from speech for this long (standin.chart() always works)
+    chartMinPoints: 3, // fewer data points than this is not charted
     // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.
     contextPack: '',
     stubRules: [],
@@ -376,6 +383,9 @@
     NS.log(relayUp ? 'relay found: live brain on' : 'relay not found: using demo answers');
     return relayUp;
   }
+  // For other modules (the data chart): ask the relay for anything, and check it is up.
+  NS.relayCall = function (kind, body, ms) { return bridgeSend(kind, body, ms || 20000); };
+  NS.relayReady = function () { return checkRelay(); };
   async function relayDecide(q, recent) {
     const d = await bridgeSend('decide', { question: q, recent: recent || '', userName: NS.config.userName }, 12000);
     return parseDecision(JSON.stringify(d.json));
@@ -695,7 +705,11 @@
         st.timer = setTimeout(function () {
           if (st.text === st.handled) return;
           st.handled = st.text;
-          if (isSelf(st.speaker)) return;
+          if (isSelf(st.speaker)) {
+            // Your own speech is never answered as a question, but "stand-in, chart <topic>" shows a chart.
+            if (NS.dataChart) NS.dataChart.handleSpeech(st.text);
+            return;
+          }
           fire(st.speaker, st.text);
         }, NS.config.captionDebounceMs);
       });
@@ -709,7 +723,11 @@
     blockLast = text;
     record('', text);
     clearTimeout(blockTimer);
-    blockTimer = setTimeout(function () { fire('', text); }, NS.config.captionDebounceMs);
+    blockTimer = setTimeout(function () {
+      // No speaker names in this layout, so a chart phrase is accepted from anyone in the caption box.
+      if (NS.dataChart && NS.dataChart.handleSpeech(text)) return;
+      fire('', text);
+    }, NS.config.captionDebounceMs);
   }
 
   NS.captions = {
@@ -744,7 +762,7 @@
   const W = 1280, H = 720;
   const PAL = ['#2f6fe4', '#e0782a', '#2a9d6f', '#a74fd0', '#c9a227', '#d6455d'];
   let canvas = null, ctx = null, stream = null, timer = null, hideTimer = null;
-  const S = { frames: [], i: 0, since: 0, mode: 'idle', shown: 0 };
+  const S = { frames: [], i: 0, since: 0, mode: 'idle', shown: 0, step: 0 };
 
   function init() {
     if (canvas) return;
@@ -778,7 +796,83 @@
     return { px: 32, font: f, lines: wrap(text, maxW, f).slice(0, Math.floor(maxH / 38)) };
   }
 
+
+  // Round axis values (1, 2, 5 times a power of ten) so the grid reads as 0, 5, 10, 15 and not 6.7, 11.4.
+  function niceScale(lo, hi, n) {
+    const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+    const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+    return { lo: Math.floor(lo / step + 1e-9) * step, hi: Math.ceil(hi / step - 1e-9) * step, step: step };
+  }
+  // 1,400,000,000 -> "1.4B"; 12,500 -> "12.5K"; small numbers keep their decimals.
+  function short(v, dec) {
+    const a = Math.abs(v), t = function (x, u) { return String(Math.round(x * 100) / 100) + u; };
+    if (a >= 1e9) return t(v / 1e9, 'B');
+    if (a >= 1e6) return t(v / 1e6, 'M');
+    if (a >= 1e4) return t(v / 1e3, 'K');
+    return dec == null ? String(Math.round(v * 100) / 100) : v.toFixed(dec);
+  }
+  NS.shortNumber = short;
+
+  // Line chart for a time series: one to three series, shared x labels (years), unit on the right of the legend row.
+  function drawLine(c, x, y, w, h) {
+    const series = c.series || [];
+    const labels = [];
+    series.forEach(function (s) { s.points.forEach(function (p) { if (labels.indexOf(p.label) < 0) labels.push(p.label); }); });
+    labels.sort();
+    let lo = Infinity, hi = -Infinity;
+    series.forEach(function (s) { s.points.forEach(function (p) { lo = Math.min(lo, p.value); hi = Math.max(hi, p.value); }); });
+    if (!isFinite(lo)) return;
+    if (lo > 0 && hi / lo > 3) lo = 0;
+    if (hi === lo) { hi += 1; lo -= 1; }
+    const sc = niceScale(lo, hi, 4);
+    lo = sc.lo; hi = sc.hi;
+    const dec = sc.step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(sc.step)));
+    const left = x + 120, right = x + w - 110, top = y + 40, bottom = y + h - 50;
+    const px = function (label) { return labels.length < 2 ? (left + right) / 2 : left + (right - left) * labels.indexOf(label) / (labels.length - 1); };
+    const py = function (v) { return bottom - (bottom - top) * (v - lo) / (hi - lo); };
+    ctx.textBaseline = 'middle';
+    ctx.font = '600 26px system-ui, sans-serif';
+    for (let v = lo; v <= hi + sc.step / 2; v += sc.step) {
+      const gy = py(v);
+      ctx.strokeStyle = '#c9d0da'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(left, gy); ctx.lineTo(right, gy); ctx.stroke();
+      ctx.fillStyle = '#5a6472'; ctx.textAlign = 'right';
+      ctx.fillText(short(v, dec), left - 12, gy);
+    }
+    // x labels: about 8 of them, always the last one; skip a label that would sit next to the last.
+    const every = Math.max(1, Math.ceil(labels.length / 8));
+    ctx.textAlign = 'center'; ctx.fillStyle = '#5a6472';
+    labels.forEach(function (l, k) {
+      const last = k === labels.length - 1;
+      if (last || (k % every === 0 && labels.length - 1 - k >= every)) ctx.fillText(l, px(l), bottom + 28);
+    });
+    series.forEach(function (s, k) {
+      const col = PAL[k % PAL.length];
+      const pts = s.points.slice().sort(function (a, b) { return a.label < b.label ? -1 : 1; });
+      ctx.strokeStyle = col; ctx.lineWidth = 6; ctx.lineJoin = 'round'; ctx.beginPath();
+      pts.forEach(function (p, i) { if (i) ctx.lineTo(px(p.label), py(p.value)); else ctx.moveTo(px(p.label), py(p.value)); });
+      ctx.stroke();
+      ctx.fillStyle = col;
+      pts.forEach(function (p) { ctx.beginPath(); ctx.arc(px(p.label), py(p.value), 7, 0, Math.PI * 2); ctx.fill(); });
+      const lp = pts[pts.length - 1];
+      ctx.textAlign = 'left'; ctx.font = '700 28px system-ui, sans-serif';
+      ctx.fillText(short(lp.value), px(lp.label) + 14, py(lp.value));
+      ctx.font = '600 26px system-ui, sans-serif';
+    });
+    if (series.length > 1 || c.unit) {
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let lx = left;
+      if (series.length > 1) series.forEach(function (s, k) {
+        ctx.fillStyle = PAL[k % PAL.length]; ctx.fillRect(lx, y + 4, 24, 24);
+        ctx.fillStyle = '#14181f'; ctx.font = '600 26px system-ui, sans-serif';
+        ctx.fillText(s.name, lx + 34, y + 16);
+        lx += 34 + ctx.measureText(s.name).width + 36;
+      });
+      if (c.unit) { ctx.textAlign = 'right'; ctx.fillStyle = '#5a6472'; ctx.font = '600 26px system-ui, sans-serif'; ctx.fillText(c.unit, x + w, y + 16); }
+    }
+  }
+
   function drawChart(c, x, y, w, h) {
+    if (c.type === 'line') return drawLine(c, x, y, w, h);
     const total = c.items.reduce(function (a, i) { return a + i.value; }, 0) || 1;
     if (c.type === 'pie') {
       const r = Math.min(h, w * 0.5) / 2 - 10, cx = x + r + 10, cy = y + h / 2;
@@ -817,8 +911,12 @@
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     if (f.kind === 'chart') {
       ctx.fillStyle = '#14181f'; ctx.font = '700 52px system-ui, sans-serif';
-      ctx.fillText(f.chart.title || f.title || '', 70, 120);
-      drawChart(f.chart, 70, 170, W - 140, 440);
+      ctx.fillText(String(f.chart.title || f.title || '').slice(0, 52), 70, 110);
+      drawChart(f.chart, 70, 150, W - 140, f.chart.source ? 430 : 480);
+      if (f.chart.source) {
+        ctx.fillStyle = '#5a6472'; ctx.font = '600 24px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        ctx.fillText(String(f.chart.source).slice(0, 95), 70, H - 90);
+      }
     } else {
       let y = 130;
       if (f.title) {
@@ -844,7 +942,7 @@
 
   function draw() {
     if (!ctx) return;
-    const step = NS.config.slideStepMs || 5000;
+    const step = S.step || NS.config.slideStepMs || 5000;
     if (S.mode === 'show' && S.frames.length > 1 && S.i < S.frames.length - 1 && Date.now() - S.since >= step) {
       S.i++; S.since = Date.now();
     }
@@ -870,12 +968,24 @@
     show: function (result, text) {
       init();
       S.frames = framesFor(result, text);
-      S.i = 0; S.since = Date.now(); S.mode = 'show'; S.shown++;
+      S.i = 0; S.since = Date.now(); S.mode = 'show'; S.shown++; S.step = 0;
       const total = (NS.config.slideStepMs || 5000) * (S.frames.length - 1) + (NS.config.slideHoldMs || 9000);
       clearTimeout(hideTimer);
       hideTimer = setTimeout(function () { S.mode = 'idle'; }, total);
       draw();
       NS.log('camera slide: ' + S.frames.length + ' frame(s)');
+    },
+    // Show ready-made frames (used by the data chart). opts: { stepMs, holdMs }
+    showFrames: function (frames, opts) {
+      init();
+      opts = opts || {};
+      S.frames = frames; S.i = 0; S.since = Date.now(); S.mode = 'show'; S.shown++; S.step = opts.stepMs || 0;
+      const step = opts.stepMs || NS.config.slideStepMs || 5000;
+      const total = step * (frames.length - 1) + (opts.holdMs || NS.config.slideHoldMs || 9000);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () { S.mode = 'idle'; }, total);
+      draw();
+      NS.log('camera frames: ' + frames.length);
     },
     clear: function () { clearTimeout(hideTimer); S.mode = 'idle'; draw(); },
     state: function () { return { mode: S.mode, i: S.i, frames: S.frames.length, shown: S.shown }; },
@@ -977,6 +1087,284 @@
   };
 })();
 
+// Data chart: say "stand-in, chart India GDP growth" and the camera shows a chart of public data, with its source.
+//
+// How it works (all steps are logged with a timestamp and step n/5):
+//   1 plan   the model picks where to look (World Bank indicator, or a Wikipedia search). It only chooses WHERE; it never supplies numbers.
+//   2 fetch  the relay downloads the data (only api.worldbank.org and en.wikipedia.org are allowed there).
+//   3 build  numbers are read from the download and checked. For Wikipedia, every number must appear word for word in the page.
+//   4 show   the chart goes on the camera, with its source written on the slide, then a one-line summary worked out from the numbers.
+//   5 chat   one labelled line with the source goes in the Meet chat.
+// Nothing is charted unless real data was found. Numbers never come from the model's memory.
+(function () {
+  const NS = (window.__standin = window.__standin || {});
+  const STEPS = 5;
+  const HOSTS = ['api.worldbank.org', 'en.wikipedia.org'];
+
+  function cut(x, n) { return String(x == null ? '' : x).replace(/\s+/g, ' ').trim().slice(0, n); }
+  function esc(s) { return encodeURIComponent(s); }
+
+  // ---- Trigger phrase ----------------------------------------------------------------------------------------------
+  // "stand-in, chart <topic>"  or  "Eswar, show the data on <topic>"  (also: plot, graph). Only your own speech counts.
+  function triggerRe() {
+    const name = String(NS.config.userName || 'Eswar').replace(/[^A-Za-z]/g, '');
+    return new RegExp('\\b(?:stand[\\s-]?in|' + name + ')\\b[,:.\\s-]*(?:please\\s+)?(?:show|chart|plot|graph)\\b[\\s,]*(?:(?:me|us|the|a|data|numbers|chart|graph|on|for|about|of)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'gi');
+  }
+  function detect(text) {
+    const re = triggerRe();
+    let m, last = '';
+    while ((m = re.exec(String(text || '')))) last = m[1];
+    return cut(last, 160).replace(/[,;:\s]+$/, '');
+  }
+
+  // ---- Plan ----------------------------------------------------------------------------------------------------------
+  const YEAR = function () { return new Date().getFullYear(); };
+  function buildPlanPrompt(topic) {
+    return {
+      system:
+        'You choose where to find public data for a chart that a speaker asked for. You do not provide any numbers. Reply with JSON only.\n' +
+        'Option 1, for country-level economic, social, demographic or environmental statistics: ' +
+        '{"source":"worldbank","indicator":"<World Bank indicator code, for example NY.GDP.MKTP.KD.ZG>","countries":["IND"],"from":2015,"to":2024,"title":"<at most 8 words>"}. ' +
+        'Use ISO3 country codes (WLD for the world), at most 3 countries, at most 25 years, and end at least one year before today.\n' +
+        'Option 2, for anything else (a Wikipedia article will be searched and read): {"source":"wikipedia","query":"<search words, at most 8>","title":"<at most 8 words>"}.',
+      user: 'Today\'s year: ' + YEAR() + '\nRequest: ' + topic,
+    };
+  }
+  function parsePlan(text, topic) {
+    const fallback = { source: 'wikipedia', query: cut(topic, 100).replace(/[^\w\s'-]/g, ' '), title: cut(topic, 60) };
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    if (!m) return fallback;
+    let o;
+    try { o = JSON.parse(m[0]); } catch (e) { return fallback; }
+    const title = cut(o.title || topic, 60);
+    if (o.source === 'worldbank') {
+      const ind = String(o.indicator || '').trim();
+      const countries = Array.from(new Set((Array.isArray(o.countries) ? o.countries : []).map(function (c) { return String(c).trim().toUpperCase(); })));
+      const from = Math.round(Number(o.from)), to = Math.round(Number(o.to));
+      const okInd = /^[A-Za-z0-9]{2,12}(\.[A-Za-z0-9_]{1,12}){1,4}$/.test(ind);
+      const okC = countries.length >= 1 && countries.length <= 3 && countries.every(function (c) { return /^[A-Z]{3}$/.test(c); });
+      const okY = isFinite(from) && isFinite(to) && from >= 1960 && to <= YEAR() && to >= from && to - from <= 40;
+      if (okInd && okC && okY) return { source: 'worldbank', indicator: ind, countries: countries, from: from, to: to, title: title };
+      return fallback;
+    }
+    if (o.source === 'wikipedia') {
+      const q = cut(o.query, 100).replace(/[^\w\s'-]/g, ' ').replace(/\s+/g, ' ').trim();
+      return q.length >= 3 ? { source: 'wikipedia', query: q, title: title } : fallback;
+    }
+    return fallback;
+  }
+
+  // ---- Relay helpers -------------------------------------------------------------------------------------------------
+  async function llmJson(system, user) {
+    const d = await NS.relayCall('llm', { system: system, user: user, maxTokens: 900 }, 30000);
+    return (d.json && d.json.text) || '';
+  }
+  async function fetchPublic(url) {
+    const host = new URL(url).hostname;
+    if (HOSTS.indexOf(host) < 0) throw new Error('host not allowed: ' + host);
+    const d = await NS.relayCall('fetch', { url: url }, 30000);
+    if (!d.json || d.json.status !== 200 || typeof d.json.body !== 'string') throw new Error('fetch failed (' + (d.json && d.json.status) + ')');
+    return d.json.body;
+  }
+
+  // ---- World Bank ----------------------------------------------------------------------------------------------------
+  function worldBankUrl(p) {
+    return 'https://api.worldbank.org/v2/country/' + p.countries.join(';') + '/indicator/' + p.indicator + '?format=json&per_page=400&date=' + p.from + ':' + p.to;
+  }
+  // Returns a chart or null. Rows look like { date:"2023", value:8.2, country:{value:"India"}, indicator:{value:"GDP growth (annual %)"} }.
+  function parseWorldBank(body, plan) {
+    let j;
+    try { j = JSON.parse(body); } catch (e) { return null; }
+    if (!Array.isArray(j) || j.length < 2 || !Array.isArray(j[1])) return null;
+    const by = {};
+    let indName = '';
+    j[1].forEach(function (r) {
+      if (r == null || r.value == null || !isFinite(Number(r.value))) return;
+      const name = cut(r.country && r.country.value, 40) || cut(r.countryiso3code, 3);
+      indName = indName || cut(r.indicator && r.indicator.value, 120);
+      (by[name] = by[name] || []).push({ label: String(r.date), value: Math.round(Number(r.value) * 1000) / 1000 });
+    });
+    const series = Object.keys(by).map(function (k) { return { name: k, points: by[k].sort(function (a, b) { return a.label < b.label ? -1 : 1; }) }; })
+      .filter(function (s) { return s.points.length >= NS.config.chartMinPoints; });
+    if (!series.length) return null;
+    const labels = [].concat.apply([], series.map(function (s) { return s.points.map(function (p) { return p.label; }); })).sort();
+    const unit = (indName.match(/\(([^()]*)\)\s*$/) || [])[1] || '';
+    return {
+      type: 'line', title: plan.title, unit: cut(unit, 30), series: series,
+      source: 'Source: World Bank, ' + plan.indicator + ', ' + labels[0] + '-' + labels[labels.length - 1],
+      sourceName: 'World Bank (' + plan.indicator + ', ' + (indName || 'indicator') + ')',
+    };
+  }
+
+  // ---- Wikipedia (fallback) ------------------------------------------------------------------------------------------
+  function htmlToText(html) {
+    return String(html || '')
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<sup[\s\S]*?<\/sup>/gi, '')
+      .replace(/<\/(tr|p|li|h[1-6]|caption)>/gi, '\n')
+      .replace(/<\/t[dh]>/gi, ' | ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
+      .replace(/&#\d+;|&[a-z]+;/g, ' ')
+      .replace(/[ \t]+/g, ' ').replace(/ ?\| ?\n/g, '\n').replace(/\n{2,}/g, '\n').trim();
+  }
+  function norm(t) { return String(t || '').replace(/[\s ]+/g, ' ').trim().toLowerCase(); }
+  function numbersIn(s) {
+    return (String(s).replace(/(\d),(?=\d{3}\b)/g, '$1').match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  }
+  // Every point must come with the exact words from the page that contain its number. Any miss rejects the whole chart.
+  function validateExtract(o, pageText, minPoints) {
+    if (!o || !Array.isArray(o.points)) return { ok: false, reason: 'no points' };
+    const hay = norm(pageText);
+    const pts = o.points.slice(0, 12);
+    if (pts.length < minPoints) return { ok: false, reason: 'too few points (' + pts.length + ')' };
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], v = Number(p && p.value), q = norm(p && p.quote);
+      const label = cut(p && p.label, 30);
+      if (!label || !isFinite(v) || q.length < 6) return { ok: false, reason: 'point ' + (i + 1) + ' is incomplete' };
+      if (hay.indexOf(q) < 0) return { ok: false, reason: 'point ' + (i + 1) + ': quote not found in the page' };
+      if (!numbersIn(q).some(function (n) { return Math.abs(n - v) < 1e-9; })) return { ok: false, reason: 'point ' + (i + 1) + ': number not in its quote' };
+      out.push({ label: label, value: v });
+    }
+    return { ok: true, points: out };
+  }
+  function buildPrompt(topic, pageText) {
+    return {
+      system:
+        'Extract ONE numeric series from the page text that best answers the request: a time series (labels are years or dates) or a ranking of up to 8 items. ' +
+        'Use ONLY numbers that appear in the text. Do not calculate, estimate or convert anything. ' +
+        'Reply with JSON only: {"title":"<at most 8 words>","unit":"<unit, may be empty>","points":[{"label":"2019","value":12.5,"quote":"the exact words copied from the text that contain this number"}]}. ' +
+        '3 to 12 points. If the text has no suitable numbers, reply {"points":[]}.',
+      user: 'Request: ' + topic + '\n\nPage text:\n' + pageText.slice(0, 12000),
+    };
+  }
+  async function fromWikipedia(plan, topic) {
+    const sBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=3&format=json&srsearch=' + esc(plan.query));
+    let hits;
+    try { hits = JSON.parse(sBody).query.search; } catch (e) { hits = []; }
+    if (!hits || !hits.length) return { ok: false, reason: 'no Wikipedia page found' };
+    const title = hits[0].title;
+    const pBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=parse&prop=text&redirects=1&format=json&page=' + esc(title));
+    let html;
+    try { html = JSON.parse(pBody).parse.text['*']; } catch (e) { return { ok: false, reason: 'could not read the Wikipedia page' }; }
+    const text = htmlToText(html);
+    const pr = buildPrompt(topic, text);
+    const raw = await llmJson(pr.system, pr.user);
+    const m = String(raw).match(/\{[\s\S]*\}/);
+    let o = null;
+    try { o = m ? JSON.parse(m[0]) : null; } catch (e) { o = null; }
+    const v = validateExtract(o, text, NS.config.chartMinPoints);
+    if (!v.ok) return { ok: false, reason: 'Wikipedia "' + title + '": ' + v.reason };
+    const years = v.points.every(function (p) { return /^\d{4}/.test(p.label); });
+    const url = 'https://en.wikipedia.org/wiki/' + esc(title.replace(/ /g, '_'));
+    const ctitle = cut(o.title || plan.title, 60);
+    const base = { title: ctitle, unit: cut(o.unit, 30), source: 'Source: Wikipedia, ' + title, sourceName: 'Wikipedia, "' + title + '" (' + url + ')' };
+    const chart = years
+      ? Object.assign(base, { type: 'line', series: [{ name: ctitle, points: v.points }] })
+      : Object.assign(base, { type: 'bar', items: v.points.slice(0, 8) });
+    return { ok: true, chart: chart };
+  }
+
+  // ---- Summary worked out from the numbers (never written by the model) ----------------------------------------------
+  function r(n) { return NS.shortNumber ? NS.shortNumber(n) : String(Math.round(n * 100) / 100); }
+  function summarise(c) {
+    if (c.type === 'bar') {
+      const s = c.items.slice().sort(function (a, b) { return b.value - a.value; });
+      return 'Highest: ' + s[0].label + ' (' + r(s[0].value) + '). Lowest: ' + s[s.length - 1].label + ' (' + r(s[s.length - 1].value) + ').';
+    }
+    if (c.series.length === 1) {
+      const p = c.series[0].points, hi = p.reduce(function (a, b) { return b.value > a.value ? b : a; });
+      const f = p[0], l = p[p.length - 1], d = l.value - f.value;
+      return 'Peak: ' + r(hi.value) + ' in ' + hi.label + '. Latest: ' + r(l.value) + ' in ' + l.label + ', ' + (d >= 0 ? 'up ' : 'down ') + r(Math.abs(d)) + ' since ' + f.label + '.';
+    }
+    return c.series.map(function (s) {
+      const f = s.points[0], l = s.points[s.points.length - 1], d = l.value - f.value;
+      return s.name + ' ' + (d >= 0 ? 'up ' : 'down ') + r(Math.abs(d)) + ' (' + f.label + ' to ' + l.label + ')';
+    }).join('. ') + '.';
+  }
+
+  // ---- Run -----------------------------------------------------------------------------------------------------------
+  let running = false;
+  const seen = {}; // topic -> time last charted from speech
+  const msg = function (title, text) { return [{ kind: 'text', title: title, text: text }]; };
+
+  async function run(topic) {
+    topic = cut(topic, 160);
+    if (!topic) return { ok: false, reason: 'no topic' };
+    if (running) { NS.log('data chart: busy, ignored "' + topic + '"'); return { ok: false, reason: 'busy' }; }
+    running = true;
+    const t0 = performance.now();
+    const step = function (n, what) { NS.log('data chart: ' + what, n, STEPS); };
+    try {
+      NS.slides.showFrames(msg('Looking up public data', topic), { holdMs: 25000 });
+      if (!(await NS.relayReady())) {
+        NS.log('data chart: relay not found, cannot look up data. Press Connect relay in the panel.');
+        NS.slides.showFrames(msg('Data lookup is off', 'The relay is not running.'), { holdMs: 5000 });
+        return { ok: false, reason: 'relay not running' };
+      }
+      step(1, 'planning where to look for "' + topic + '"');
+      const pr = buildPlanPrompt(topic);
+      const plan = parsePlan(await llmJson(pr.system, pr.user), topic);
+      step(2, 'plan: ' + (plan.source === 'worldbank' ? 'World Bank ' + plan.indicator + ' ' + plan.countries.join(',') + ' ' + plan.from + '-' + plan.to : 'Wikipedia search "' + plan.query + '"'));
+      let chart = null, why = '';
+      if (plan.source === 'worldbank') {
+        try { chart = parseWorldBank(await fetchPublic(worldBankUrl(plan)), plan); } catch (e) { why = 'World Bank: ' + e.message; }
+        if (!chart && !why) why = 'World Bank returned no usable data for ' + plan.indicator;
+        if (!chart) {
+          NS.log('data chart: ' + why + '; trying Wikipedia');
+          plan.source = 'wikipedia'; plan.query = cut(topic, 100).replace(/[^\w\s'-]/g, ' ');
+        }
+      }
+      if (!chart) {
+        try {
+          const w = await fromWikipedia(plan, topic);
+          if (w.ok) chart = w.chart; else why = (why ? why + '; ' : '') + w.reason;
+        } catch (e) { why = (why ? why + '; ' : '') + 'Wikipedia: ' + e.message; }
+      }
+      step(3, chart ? 'data checked: ' + (chart.series ? chart.series.map(function (s) { return s.name + ' ' + s.points.length + ' points'; }).join(', ') : chart.items.length + ' items') : 'no reliable data (' + why + ')');
+      if (!chart) {
+        NS.slides.showFrames(msg('No reliable data found', topic), { holdMs: 6000 });
+        return { ok: false, reason: why || 'no data' };
+      }
+      const frames = [{ kind: 'chart', chart: chart }, { kind: 'text', title: 'What the data shows', text: summarise(chart) }];
+      NS.slides.showFrames(frames, { stepMs: NS.config.chartStepMs, holdMs: NS.config.chartHoldMs });
+      step(4, 'chart on the camera in ' + Math.round(performance.now() - t0) + ' ms');
+      if (NS.config.chartChat && NS.chat) {
+        try { await NS.chat.post('Chart on screen: ' + cut(chart.title, 60) + '. ' + chart.sourceName + '. ' + summarise(chart)); } catch (e) { NS.log('data chart: chat post failed: ' + e.message); }
+      }
+      step(5, 'done');
+      const res = { ok: true, topic: topic, chart: chart, summary: summarise(chart), ms: Math.round(performance.now() - t0), at: NS.isoLocal() };
+      NS.chartHistory.unshift(res);
+      NS.events.dispatchEvent(new CustomEvent('chart', { detail: res }));
+      return res;
+    } catch (e) {
+      NS.log('data chart failed: ' + e.message);
+      try { NS.slides.showFrames(msg('Data lookup failed', 'Try again.'), { holdMs: 4000 }); } catch (e2) { /* ignore */ }
+      return { ok: false, reason: e.message };
+    } finally {
+      running = false;
+    }
+  }
+
+  // Called by the caption reader with your own speech. Runs at most once per topic every few minutes.
+  function handleSpeech(text) {
+    if (!NS.config.dataChart) return false;
+    const topic = detect(text);
+    if (!topic) return false;
+    const key = norm(topic), now = Date.now();
+    if (seen[key] && now - seen[key] < (NS.config.chartRepeatMs || 300000)) return false;
+    seen[key] = now;
+    NS.log('heard a chart request: ' + topic);
+    run(topic);
+    return true;
+  }
+
+  NS.chartHistory = NS.chartHistory || [];
+  NS.events = NS.events || new EventTarget();
+  NS.dataChart = { detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
+})();
+
 // All-in-one stand-in: captions in -> answer in the Meet chat AND as slides on your camera. Control panel with Yes/No override.
 (function () {
   const NS = (window.__standin = window.__standin || {});
@@ -1014,7 +1402,7 @@
     row2.append(el('span', '', 'Answer at'), thr, thrv);
     const row3 = el('div', 'display:flex;gap:8px;margin-top:8px');
     const q = el('input', 'flex:1;min-width:0;padding:6px;border:1px solid #d9dee6;border-radius:6px'); q.type = 'text'; q.id = 'standin-q';
-    q.placeholder = 'Test question'; q.setAttribute('aria-label', 'Test question');
+    q.placeholder = 'Test question or: stand-in, chart ...'; q.setAttribute('aria-label', 'Test question');
     const ask = el('button', BTN, 'Ask'); ask.id = 'standin-ask';
     row3.append(q, ask);
     const last = el('div', 'margin-top:8px;font-size:13px'); last.id = 'standin-last';
@@ -1025,10 +1413,12 @@
     ovRow.append(yes, no);
     const ov = el('div', 'display:none;margin-top:8px;padding:8px;border:2px solid #a35a00;border-radius:8px'); ov.id = 'standin-override';
     ov.append(ovText, ovRow);
-    const row4 = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px');
+    const row4 = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap');
     const save = el('button', BTN, 'Save captions (.md)'); save.id = 'standin-save';
     const saved = el('span', 'color:#5a6472;font-size:12px');
-    row4.append(save, saved);
+    const clear = el('button', BTN, 'Clear camera'); clear.id = 'standin-clear';
+    row4.append(save, clear, saved);
+    clear.onclick = function () { NS.slides.clear(); saved.textContent = 'Camera cleared.'; };
     save.onclick = function () { saved.textContent = NS.downloadTranscript() ? 'Saved.' : 'No captions yet.'; };
     host.append(title, status, row1, row2, row3, row4, ov, last);
     document.body.appendChild(host);
@@ -1039,6 +1429,9 @@
     thr.oninput = function () { NS.config.threshold = Number(thr.value); thrv.textContent = thr.value + '%'; NS.saveConfig(); };
     ask.onclick = function () {
       const v = q.value.trim(); if (!v) return;
+      // A chart phrase typed here, for example: stand-in, chart India GDP growth
+      const topic = NS.dataChart.detect(v);
+      if (topic) { last.textContent = 'Looking up: ' + topic; NS.dataChart.run(topic); return; }
       NS.ask(v, '').then(function (r) {
         if (!r.handled) last.textContent = 'Ignored (' + r.reason + '). Start with your name, for example: "' + NS.config.userName + ', how is the project going?"';
       });
@@ -1052,6 +1445,7 @@
       const label = r.action === 'held' ? 'Held for you' : r.action === 'answered' ? 'Answered (open)' : r.decision.answer.toUpperCase();
       last.textContent = label + ' · ' + r.decision.confidence + '% · ' + r.question;
     });
+    NS.events.addEventListener('chart', function (ev) { last.textContent = 'Chart shown · ' + ev.detail.chart.title + ' · ' + ev.detail.chart.source; });
     drawStatus();
   }
   function drawStatus() {
@@ -1064,10 +1458,12 @@
     start: function () { NS.captions.start(); NS.listening = true; drawStatus(); NS.log('listening to captions; answers go to the Meet chat and the camera'); },
     stop: function () { NS.captions.stop(); NS.listening = false; drawStatus(); NS.log('paused'); },
     ask: function (text) { return NS.ask(text, text); },
+    // Show a chart of public data on the camera now, for example standin.chart('India GDP growth since 2015').
+    chart: function (topic) { return NS.dataChart.run(topic); },
     transcript: function () { return NS.transcriptMarkdown(); },
     saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },
-    status: function () { return { listening: !!NS.listening, brain: NS.config.brain, threshold: NS.config.threshold, sent: NS.chat.sent.length, cameraCalls: NS.cameraCalls, slides: NS.slides.state() }; },
+    status: function () { return { listening: !!NS.listening, brain: NS.config.brain, threshold: NS.config.threshold, sent: NS.chat.sent.length, charts: NS.chartHistory.length, cameraCalls: NS.cameraCalls, slides: NS.slides.state() }; },
     config: NS.config,
     save: NS.saveConfig,
   };
