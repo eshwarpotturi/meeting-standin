@@ -133,5 +133,17 @@
     return r.pack;
   }
 
-  NS.context = { load: load, pick: pick, packFor: packFor, build: build, words: words, match: match, info: function () { return { files: files.length, pieces: chunks.length, error: lastError }; } };
+  // For checking: what the stand-in knows, and exactly what a question would send with it.
+  async function explain(question) {
+    const ready = NS.relayReady ? await NS.relayReady() : false;
+    if (!ready) return { ok: false, text: 'The relay is not reachable. Start relay.ps1 and press Connect relay.' };
+    await load(true);
+    const i = info();
+    if (!i.files) return { ok: false, text: 'The relay has no notes folder (' + (i.error || 'empty') + '). Put brain-context inside brain-test, then restart relay.ps1.' };
+    const r = pick(question || 'how is the Veeva project going', '');
+    return { ok: true, files: i.files, pieces: i.pieces, used: r.used, chars: r.chars, pack: r.pack, text: 'Notes: ' + i.files + ' files loaded. This question would use ' + r.chars + ' characters from: ' + (r.used.filter(function (f, k, a) { return a.indexOf(f) === k; }).join(', ') || 'no file') + '.' };
+  }
+  function info() { return { files: files.length, pieces: chunks.length, error: lastError }; }
+
+  NS.context = { explain: explain, load: load, pick: pick, packFor: packFor, build: build, words: words, match: match, info: info };
 })();

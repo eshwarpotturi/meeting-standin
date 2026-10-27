@@ -8,12 +8,13 @@ The stand-in answers from a folder, not one file: `brain-test\brain-context\`. P
 
 - Files whose name starts with `00` are always included (who you are, standing rules). The list of file names is always included, so the model knows what exists.
 - Matching tolerates misheard words ("Viva" finds the Veeva notes) and counts file names.
+- **Check notes** button in the panel (or `standin.explain("question").then(console.log)`) shows how many files are loaded and which ones a question would use. After each answer the panel also lists the notes it used.
 - Each log line shows which files a question used: `context: question uses 5,200 characters from projects/release-second-opinion.md, ...`
 - `brain-test\sync-repos.ps1` refreshes `brain-context\repos` from your public GitHub repos (untested: no PowerShell where it was written).
 - The folder is private and is not in Git (`.gitignore`). `brain-pack.txt` still works as a fallback.
 - Settings: `contextBudget` (characters per question, 9000), `contextRefreshMs` (how often the relay folder is re-read, 60000).
 - Answers are checked against the notes: a generic status line or a number that is not in the notes is held ("I will confirm after the meeting").
-- Tested: `node test/context.mjs`, 17 checks (right file found, misheard word, size limit, core file, old relay without `/context`). Not tested: the relay's `/context` endpoint in PowerShell, and real questions on real notes.
+- Tested: `node test/context.mjs`, 19 checks (right file found, misheard word, size limit, core file, old relay without `/context`). Not tested: the relay's `/context` endpoint in PowerShell, and real questions on real notes.
 
 ## Research and get back (chat only) (27 Oct 2026)
 

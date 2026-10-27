@@ -765,7 +765,19 @@
     return r.pack;
   }
 
-  NS.context = { load: load, pick: pick, packFor: packFor, build: build, words: words, match: match, info: function () { return { files: files.length, pieces: chunks.length, error: lastError }; } };
+  // For checking: what the stand-in knows, and exactly what a question would send with it.
+  async function explain(question) {
+    const ready = NS.relayReady ? await NS.relayReady() : false;
+    if (!ready) return { ok: false, text: 'The relay is not reachable. Start relay.ps1 and press Connect relay.' };
+    await load(true);
+    const i = info();
+    if (!i.files) return { ok: false, text: 'The relay has no notes folder (' + (i.error || 'empty') + '). Put brain-context inside brain-test, then restart relay.ps1.' };
+    const r = pick(question || 'how is the Veeva project going', '');
+    return { ok: true, files: i.files, pieces: i.pieces, used: r.used, chars: r.chars, pack: r.pack, text: 'Notes: ' + i.files + ' files loaded. This question would use ' + r.chars + ' characters from: ' + (r.used.filter(function (f, k, a) { return a.indexOf(f) === k; }).join(', ') || 'no file') + '.' };
+  }
+  function info() { return { files: files.length, pieces: chunks.length, error: lastError }; }
+
+  NS.context = { explain: explain, load: load, pick: pick, packFor: packFor, build: build, words: words, match: match, info: info };
 })();
 
 // Reads Meet's live captions from the page. Captions must be switched on in Meet.
@@ -1703,7 +1715,9 @@
     const save = el('button', BTN, 'Save captions (.md)'); save.id = 'standin-save';
     const saved = el('span', 'color:#5a6472;font-size:12px');
     const clear = el('button', BTN, 'Clear camera'); clear.id = 'standin-clear';
-    row4.append(save, clear, saved);
+    const chk = el('button', BTN, 'Check notes'); chk.id = 'standin-notes';
+    row4.append(save, clear, chk, saved);
+    chk.onclick = function () { saved.textContent = 'Checking notes...'; NS.context.explain(q.value.replace(/^\s*eswar[,:]?\s*/i, '').trim()).then(function (r) { saved.textContent = r.text; NS.log('notes check: ' + r.text); }); };
     clear.onclick = function () { NS.slides.clear(); saved.textContent = 'Camera cleared.'; };
     save.onclick = function () { saved.textContent = NS.downloadTranscript() ? 'Saved.' : 'No captions yet.'; };
     host.append(title, status, row1, row2, row3, row4, ov, last);
@@ -1731,7 +1745,8 @@
     NS.events.addEventListener('decision', function (ev) {
       const r = ev.detail;
       const label = r.action === 'held' ? 'Held for you' : r.action === 'answered' ? 'Answered (open)' : r.decision.answer.toUpperCase();
-      last.textContent = label + ' \u00b7 ' + r.decision.confidence + '% \u00b7 ' + r.question;
+      const used = NS.lastContext && NS.lastContext.used.filter(function (f, k, a) { return a.indexOf(f) === k; });
+      last.textContent = label + ' \u00b7 ' + r.decision.confidence + '% \u00b7 ' + r.question + (used && used.length ? ' \u00b7 notes used: ' + used.join(', ') : '');
     });
     NS.events.addEventListener('chart', function (ev) { last.textContent = 'Chart shown \u00b7 ' + ev.detail.chart.title + ' \u00b7 ' + ev.detail.chart.source; });
     drawStatus();
@@ -1749,6 +1764,8 @@
     // Show a chart of public data on the camera now, for example standin.chart('India GDP growth since 2015').
     chart: function (topic) { return NS.dataChart.run(topic); },
     research: function (topic) { return NS.research.run(topic); },
+    // Shows what the stand-in knows and what this question would send: standin.explain('how is the Veeva project going').then(console.log)
+    explain: function (q) { return NS.context.explain(q); },
     transcript: function () { return NS.transcriptMarkdown(); },
     saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },

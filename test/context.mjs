@@ -92,6 +92,18 @@ console.log(`${stamp()} --- a spoken question uses the folder ---`);
   await page.context().close();
 }
 
+console.log(`${stamp()} --- check notes (panel button and standin.explain) ---`);
+{
+  const { page } = await session();
+  await page.fill('#standin-q', 'Eswar, how is the Viva project going?'); await page.click('#standin-notes');
+  const ok = await until(page, () => /files loaded/.test(document.getElementById('standin-notes').parentElement.textContent), 6000);
+  const t = await page.evaluate(() => document.getElementById('standin-notes').parentElement.textContent);
+  check('Check notes button says how many files are loaded and which ones this question would use', ok && /5 files loaded/.test(t) && /release-second-opinion\.md/.test(t), t);
+  const r = await page.evaluate(() => standin.explain('what is the vault demo'));
+  check('standin.explain returns the files used and the text that would be sent', r.ok && r.used.includes('projects/the-heist.md') && /The Heist/.test(r.pack), JSON.stringify(r.used));
+  await page.context().close();
+}
+
 console.log(`${stamp()} --- vague or invented answers are held ---`);
 {
   const { page } = await session();

@@ -50,7 +50,9 @@
     const save = el('button', BTN, 'Save captions (.md)'); save.id = 'standin-save';
     const saved = el('span', 'color:#5a6472;font-size:12px');
     const clear = el('button', BTN, 'Clear camera'); clear.id = 'standin-clear';
-    row4.append(save, clear, saved);
+    const chk = el('button', BTN, 'Check notes'); chk.id = 'standin-notes';
+    row4.append(save, clear, chk, saved);
+    chk.onclick = function () { saved.textContent = 'Checking notes...'; NS.context.explain(q.value.replace(/^\s*eswar[,:]?\s*/i, '').trim()).then(function (r) { saved.textContent = r.text; NS.log('notes check: ' + r.text); }); };
     clear.onclick = function () { NS.slides.clear(); saved.textContent = 'Camera cleared.'; };
     save.onclick = function () { saved.textContent = NS.downloadTranscript() ? 'Saved.' : 'No captions yet.'; };
     host.append(title, status, row1, row2, row3, row4, ov, last);
@@ -78,7 +80,8 @@
     NS.events.addEventListener('decision', function (ev) {
       const r = ev.detail;
       const label = r.action === 'held' ? 'Held for you' : r.action === 'answered' ? 'Answered (open)' : r.decision.answer.toUpperCase();
-      last.textContent = label + ' · ' + r.decision.confidence + '% · ' + r.question;
+      const used = NS.lastContext && NS.lastContext.used.filter(function (f, k, a) { return a.indexOf(f) === k; });
+      last.textContent = label + ' · ' + r.decision.confidence + '% · ' + r.question + (used && used.length ? ' · notes used: ' + used.join(', ') : '');
     });
     NS.events.addEventListener('chart', function (ev) { last.textContent = 'Chart shown · ' + ev.detail.chart.title + ' · ' + ev.detail.chart.source; });
     drawStatus();
@@ -96,6 +99,8 @@
     // Show a chart of public data on the camera now, for example standin.chart('India GDP growth since 2015').
     chart: function (topic) { return NS.dataChart.run(topic); },
     research: function (topic) { return NS.research.run(topic); },
+    // Shows what the stand-in knows and what this question would send: standin.explain('how is the Veeva project going').then(console.log)
+    explain: function (q) { return NS.context.explain(q); },
     transcript: function () { return NS.transcriptMarkdown(); },
     saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },
