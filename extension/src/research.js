@@ -11,11 +11,15 @@
   let running = false;
 
   function triggerRe() {
-    const name = String(NS.config.userName || 'Eswar').replace(/[^A-Za-z]/g, '');
-    return new RegExp('\\b(?:stand[\\s-]?in|' + name + ')\\b[,:.\\s-]*(?:can you |could you |please )*(?:do some research (?:on|about|into)|research|look into|look up|find out (?:about|more about)?|dig into)\\b[\\s,]*(?:(?:on|about|for|into|the|something|some)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'i');
+    return new RegExp('\\b(?:' + DC().aliases() + ')\\b[?,:.\\s-]*(?:can you |could you |please )*(?:do some research (?:on|about|into)|research|look into|look up|find out (?:about|more about)?|dig into)\\b[\\s,]*(?:(?:on|about|for|into|the|something|some)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'i');
+  }
+  // Also "research <topic> and get back to me" with no name at all (the captions often drop the name).
+  function bareRe() {
+    return /(?:^|[.?!]\s+)(?:(?:can|could) you |please )*(?:do some research (?:on|about|into)|research|look into|look up|dig into)\s+((?:on |about |for |into |the |something |some )*[^.?!\n]{4,160}?)\s*(?:,?\s*(?:and|then)\s+)?(?:get|come) back to (?:me|us)\b/i;
   }
   function detect(text) {
-    const m = String(text || '').match(triggerRe());
+    const t = String(text || '');
+    const m = t.match(triggerRe()) || t.match(bareRe());
     if (!m) return '';
     return DC().cut(m[1].replace(/\b(?:and|then)?\s*(?:get|come) back to (?:me|us)\b.*$/i, '').replace(/\b(?:and|then)\s*(?:let|tell) (?:me|us) know\b.*$/i, ''), 160).replace(/[,;:\s]+$/, '').replace(/\s+please$/i, '');
   }

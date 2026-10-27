@@ -651,8 +651,9 @@
     return speaker && text ? { speaker: speaker, text: text } : null;
   }
   function isSelf(speaker) {
-    const s = speaker.toLowerCase();
-    return NS.config.ignoreOwnSpeech !== false && (s === 'you' || s === NS.config.userName.toLowerCase() + ' (you)');
+    // Meet labels your own speech "You", or with your full profile name (seen live: "Pothuri Sai Eswar"), so any speaker whose name contains userName counts.
+    const s = speaker.toLowerCase(), u = String(NS.config.userName || '').toLowerCase();
+    return NS.config.ignoreOwnSpeech !== false && (s === 'you' || /\(you\)\s*$/.test(s) || (u.length >= 3 && s.indexOf(u) >= 0));
   }
 
   // Add to the transcript: same speaker keeps growing one entry (as in Anand's file).
@@ -1110,14 +1111,25 @@
 
   // ---- Trigger phrase ----------------------------------------------------------------------------------------------
   // "stand-in, chart <topic>"  or  "Eswar, show the data on <topic>"  (also: plot, graph). Only your own speech counts.
-  function triggerRe() {
+  // Meet's captions often mishear "stand-in" ("You?", "Stand.", "standing"), so several spellings count, and so does a bare "Chart <topic>"
+  // at the start of a sentence (only your own speech is checked, so this is safe enough).
+  function aliases() {
     const name = String(NS.config.userName || 'Eswar').replace(/[^A-Za-z]/g, '');
-    return new RegExp('\\b(?:stand[\\s-]?in|' + name + ')\\b[,:.\\s-]*(?:please\\s+)?(?:show|chart|plot|graph)\\b[\\s,]*(?:(?:me|us|the|a|data|numbers|chart|graph|on|for|about|of)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'gi');
+    return ['stand[\\s-]?in', 'standing', 'stand', 'you', 'hey', 'ishwar', 'eshwar', 'eswar', 'iswar', 'ishwara', 'eswara', name].filter(Boolean).join('|');
+  }
+  function triggerRe() {
+    return new RegExp('\\b(?:' + aliases() + ')\\b[?,:.\\s-]*(?:please\\s+)?(?:show|chart|plot|graph)\\b[\\s,]*(?:(?:me|us|the|a|data|numbers|chart|graph|on|for|about|of)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'gi');
+  }
+  function bareRe() {
+    return /(?:^|[.?!]\s+)(?:please\s+)?(?:chart|plot|graph)\s+(?!(?:shows?|is|was|here|above|below|on|looks?|where|that|which|this|these|those|it|there)\b)((?:the |a |me |us |data |on |for |about |of )*[^.?!\n]{4,160})/gi;
   }
   function detect(text) {
+    const t = String(text || '');
+    let m, last = '', lastAt = -1;
     const re = triggerRe();
-    let m, last = '';
-    while ((m = re.exec(String(text || '')))) last = m[1];
+    while ((m = re.exec(t))) { last = m[1]; lastAt = m.index; }
+    const re2 = bareRe();
+    while ((m = re2.exec(t))) { if (m.index >= lastAt) { last = m[1]; lastAt = m.index; } }
     return cut(last, 160).replace(/[,;:\s]+$/, '');
   }
 
@@ -1371,7 +1383,7 @@
 
   NS.chartHistory = NS.chartHistory || [];
   NS.events = NS.events || new EventTarget();
-  NS.dataChart = { llmJson: llmJson, fetchPublic: fetchPublic, wikiPage: wikiPage, norm: norm, numbersIn: numbersIn, cut: cut, detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
+  NS.dataChart = { aliases: aliases, llmJson: llmJson, fetchPublic: fetchPublic, wikiPage: wikiPage, norm: norm, numbersIn: numbersIn, cut: cut, detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
 })();
 
 // Research and get back: someone says "stand-in, research <topic> and get back to me" (or "Eswar, look into ...").
@@ -1387,11 +1399,15 @@
   let running = false;
 
   function triggerRe() {
-    const name = String(NS.config.userName || 'Eswar').replace(/[^A-Za-z]/g, '');
-    return new RegExp('\\b(?:stand[\\s-]?in|' + name + ')\\b[,:.\\s-]*(?:can you |could you |please )*(?:do some research (?:on|about|into)|research|look into|look up|find out (?:about|more about)?|dig into)\\b[\\s,]*(?:(?:on|about|for|into|the|something|some)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'i');
+    return new RegExp('\\b(?:' + DC().aliases() + ')\\b[?,:.\\s-]*(?:can you |could you |please )*(?:do some research (?:on|about|into)|research|look into|look up|find out (?:about|more about)?|dig into)\\b[\\s,]*(?:(?:on|about|for|into|the|something|some)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'i');
+  }
+  // Also "research <topic> and get back to me" with no name at all (the captions often drop the name).
+  function bareRe() {
+    return /(?:^|[.?!]\s+)(?:(?:can|could) you |please )*(?:do some research (?:on|about|into)|research|look into|look up|dig into)\s+((?:on |about |for |into |the |something |some )*[^.?!\n]{4,160}?)\s*(?:,?\s*(?:and|then)\s+)?(?:get|come) back to (?:me|us)\b/i;
   }
   function detect(text) {
-    const m = String(text || '').match(triggerRe());
+    const t = String(text || '');
+    const m = t.match(triggerRe()) || t.match(bareRe());
     if (!m) return '';
     return DC().cut(m[1].replace(/\b(?:and|then)?\s*(?:get|come) back to (?:me|us)\b.*$/i, '').replace(/\b(?:and|then)\s*(?:let|tell) (?:me|us) know\b.*$/i, ''), 160).replace(/[,;:\s]+$/, '').replace(/\s+please$/i, '');
   }

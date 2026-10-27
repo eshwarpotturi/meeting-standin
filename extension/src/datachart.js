@@ -17,14 +17,25 @@
 
   // ---- Trigger phrase ----------------------------------------------------------------------------------------------
   // "stand-in, chart <topic>"  or  "Eswar, show the data on <topic>"  (also: plot, graph). Only your own speech counts.
-  function triggerRe() {
+  // Meet's captions often mishear "stand-in" ("You?", "Stand.", "standing"), so several spellings count, and so does a bare "Chart <topic>"
+  // at the start of a sentence (only your own speech is checked, so this is safe enough).
+  function aliases() {
     const name = String(NS.config.userName || 'Eswar').replace(/[^A-Za-z]/g, '');
-    return new RegExp('\\b(?:stand[\\s-]?in|' + name + ')\\b[,:.\\s-]*(?:please\\s+)?(?:show|chart|plot|graph)\\b[\\s,]*(?:(?:me|us|the|a|data|numbers|chart|graph|on|for|about|of)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'gi');
+    return ['stand[\\s-]?in', 'standing', 'stand', 'you', 'hey', 'ishwar', 'eshwar', 'eswar', 'iswar', 'ishwara', 'eswara', name].filter(Boolean).join('|');
+  }
+  function triggerRe() {
+    return new RegExp('\\b(?:' + aliases() + ')\\b[?,:.\\s-]*(?:please\\s+)?(?:show|chart|plot|graph)\\b[\\s,]*(?:(?:me|us|the|a|data|numbers|chart|graph|on|for|about|of)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'gi');
+  }
+  function bareRe() {
+    return /(?:^|[.?!]\s+)(?:please\s+)?(?:chart|plot|graph)\s+(?!(?:shows?|is|was|here|above|below|on|looks?|where|that|which|this|these|those|it|there)\b)((?:the |a |me |us |data |on |for |about |of )*[^.?!\n]{4,160})/gi;
   }
   function detect(text) {
+    const t = String(text || '');
+    let m, last = '', lastAt = -1;
     const re = triggerRe();
-    let m, last = '';
-    while ((m = re.exec(String(text || '')))) last = m[1];
+    while ((m = re.exec(t))) { last = m[1]; lastAt = m.index; }
+    const re2 = bareRe();
+    while ((m = re2.exec(t))) { if (m.index >= lastAt) { last = m[1]; lastAt = m.index; } }
     return cut(last, 160).replace(/[,;:\s]+$/, '');
   }
 
@@ -278,5 +289,5 @@
 
   NS.chartHistory = NS.chartHistory || [];
   NS.events = NS.events || new EventTarget();
-  NS.dataChart = { llmJson: llmJson, fetchPublic: fetchPublic, wikiPage: wikiPage, norm: norm, numbersIn: numbersIn, cut: cut, detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
+  NS.dataChart = { aliases: aliases, llmJson: llmJson, fetchPublic: fetchPublic, wikiPage: wikiPage, norm: norm, numbersIn: numbersIn, cut: cut, detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
 })();

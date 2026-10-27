@@ -42,8 +42,9 @@
     return speaker && text ? { speaker: speaker, text: text } : null;
   }
   function isSelf(speaker) {
-    const s = speaker.toLowerCase();
-    return NS.config.ignoreOwnSpeech !== false && (s === 'you' || s === NS.config.userName.toLowerCase() + ' (you)');
+    // Meet labels your own speech "You", or with your full profile name (seen live: "Pothuri Sai Eswar"), so any speaker whose name contains userName counts.
+    const s = speaker.toLowerCase(), u = String(NS.config.userName || '').toLowerCase();
+    return NS.config.ignoreOwnSpeech !== false && (s === 'you' || /\(you\)\s*$/.test(s) || (u.length >= 3 && s.indexOf(u) >= 0));
   }
 
   // Add to the transcript: same speaker keeps growing one entry (as in Anand's file).
