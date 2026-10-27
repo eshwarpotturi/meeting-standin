@@ -1539,6 +1539,8 @@
     ask.onclick = function () {
       const v = q.value.trim(); if (!v) return;
       // A chart phrase typed here, for example: stand-in, chart India GDP growth
+      const rtopic = NS.research && NS.research.detect(v);
+      if (rtopic) { last.textContent = 'Researching: ' + rtopic + ' (answer goes to the chat)'; NS.research.run(rtopic); return; }
       const topic = NS.dataChart.detect(v);
       if (topic) { last.textContent = 'Looking up: ' + topic; NS.dataChart.run(topic); return; }
       NS.ask(v, '').then(function (r) {
@@ -1569,6 +1571,7 @@
     ask: function (text) { return NS.ask(text, text); },
     // Show a chart of public data on the camera now, for example standin.chart('India GDP growth since 2015').
     chart: function (topic) { return NS.dataChart.run(topic); },
+    research: function (topic) { return NS.research.run(topic); },
     transcript: function () { return NS.transcriptMarkdown(); },
     saveTranscript: function () { return NS.downloadTranscript(); },
     chatCheck: function () { return NS.chat.check(); },
