@@ -2,6 +2,17 @@
 
 **Demo page:** https://eshwarpotturi.github.io/meeting-standin/
 
+## Research and get back (chat only) (27 Oct 2026)
+
+Anyone in the meeting can say **"stand-in, research <topic> and get back to me"** (also "Eswar, look into ..." or "do some research on ..."). The stand-in answers in the Meet chat only: no camera change, no voice.
+
+1. At once: "Noted. I will look up ... and post what I find here shortly."
+2. It searches Wikipedia and reads the best page (through the relay, same two allowed hosts as the chart).
+3. The model writes up to 4 sentences, each with the exact words from the page that support it. A sentence is kept only if those words are really in the page.
+4. One labelled chat message: the kept sentences, the Wikipedia link, and "Not checked by Eswar yet." If nothing can be quoted it says so and does not guess. If the relay is not running it says Eswar will follow up himself.
+
+The same topic is not repeated for 5 minutes. Switch off with `research: false` in `standin.config`. Tested in `test/datachart.mjs` (12 checks, mock relay). Not tested: real Wikipedia pages and the real model. It is a Wikipedia lookup, not a general web search, so current news is not covered.
+
 ## Data chart: say a phrase, the camera shows public data (27 Oct 2026)
 
 While you explain something, say **"stand-in, chart India GDP growth since 2018"**. The stand-in looks up public data, then shows a chart on your camera in place of the slides, with its source written on the slide. Then it shows a one-line summary. It also posts one labelled line with the source in the Meet chat.
@@ -26,7 +37,7 @@ Settings (`standin.config`): `dataChart` (false = off), `chartHoldMs`, `chartSte
 
 Same as the all-in-one steps below, but update the relay first: the new `brain-test\relay.ps1` has `/llm` and `/fetch`. Restart it, press **Connect relay**, then say or type the phrase. Without the relay the camera says "Data lookup is off".
 
-### Tested: `node test/datachart.mjs`, 39 checks (mock Meet page and mock relay, no network)
+### Tested: `node test/datachart.mjs`, 51 checks (mock Meet page and mock relay, no network)
 
 Phrase detection (hyphen or not, filler words, last request wins, ordinary talk ignored), plan checks (bad indicator, country code, too many countries, bad years), the Wikipedia grounding check, the full World Bank path (right URL, empty year dropped, source on the slide, summary, chart pixels on the camera, chat line, timestamped steps), other people's speech ignored, repeat topics ignored, fallback to Wikipedia, a bar chart for names, a refused chart for a number not on the page, only the two allowed hosts requested, no relay, and the off switch. `npm test` runs every suite.
 

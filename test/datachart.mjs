@@ -47,6 +47,11 @@ const relaySrv = http.createServer((req, res) => {
         if (/bad indicator/.test(u)) return res.end(JSON.stringify({ text: '{"source":"worldbank","indicator":"XX.INVALID","countries":["IND"],"from":2018,"to":2023,"title":"Bad indicator test"}' }));
         return res.end(JSON.stringify({ text: '{"source":"wikipedia","query":"test rovers","title":"Test rovers"}' }));
       }
+      if (/Write a short factual answer/.test(body.system)) {
+        if (/nothing page/.test(u)) return res.end(JSON.stringify({ text: '{"sentences":[]}' }));
+        if (/invented/.test(u)) return res.end(JSON.stringify({ text: JSON.stringify({ sentences: [{ text: 'Rovers reached 190 in 2023.', quote: '2023 | 190' }, { text: 'Rovers will reach 500 by 2030.', quote: 'forecast 500 by 2030' }] }) }));
+        return res.end(JSON.stringify({ text: 'Sure: ' + JSON.stringify({ sentences: [{ text: 'Active test rovers grew from 120 in 2019 to 190 in 2023.', quote: '2019 | 120' }, { text: 'Alpha is 45 km away.', quote: 'Alpha | 45' }] }) }));
+      }
       // extraction from the Wikipedia page
       if (/fabricated/.test(u)) return res.end(JSON.stringify({ text: JSON.stringify({ title: 'Rovers', unit: '', points: YEARS.map((p, i) => (i === 3 ? { label: '2022', value: 999, quote: '2022 | 999' } : p)) }) }));
       if (/sites/.test(u)) return res.end(JSON.stringify({ text: JSON.stringify({ title: 'Distance by site', unit: 'km', points: [['Alpha', 45], ['Bravo', 28], ['Charlie', 17]].map(([l, v]) => ({ label: l, value: v, quote: `${l} | ${v}` })) }) }));
@@ -246,6 +251,51 @@ console.log(`${stamp()} --- data chart can be switched off ---`);
   const before = seen.length;
   await turn(page, 0, 'You', 'stand-in, chart India GDP growth since 2018', 1500);
   check('dataChart:false ignores the phrase', seen.length === before && (await page.evaluate(() => __standin.chartHistory.length)) === 0);
+  await page.context().close();
+}
+
+console.log(`${stamp()} --- research and get back (chat only) ---`);
+{
+  const { page, errors } = await session();
+  const r = await page.evaluate(() => [
+    __standin.research.detect('stand-in, research the Mars rover missions and get back to me'),
+    __standin.research.detect('Eswar, can you do some research on solar panel costs and get back to us.'),
+    __standin.research.detect('Eswar, look into the history of the metric system'),
+    __standin.research.detect('we should research this later'),
+    __standin.research.detect('Eswar, did the research go out?'),
+  ]);
+  check('research phrase found, "and get back to me" dropped, ordinary talk ignored', r[0] === 'Mars rover missions' && r[1] === 'solar panel costs' && r[2] === 'history of the metric system' && r[3] === '' && r[4] === '', JSON.stringify(r));
+  const before = seen.length;
+  await turn(page, 0, 'Anand', 'stand-in, research test rovers and get back to me', 100);
+  check('someone else can ask: acknowledgement comes first', await until(page, () => window.sentMessages.length >= 1, 4000) && /^\[AI stand-in for Eswar\] Noted\. I will look up "test rovers"/.test((await msgs(page))[0]), (await msgs(page))[0]);
+  check('then the answer is posted in the chat', await until(page, () => window.sentMessages.length >= 2, 8000));
+  const m = await msgs(page);
+  check('answer has both quoted sentences, the source link and the "not checked" note', /Active test rovers grew from 120 in 2019 to 190 in 2023\. Alpha is 45 km away\./.test(m[1]) && /en\.wikipedia\.org\/wiki\/Test_rover_page/.test(m[1]) && /Not checked by Eswar yet/.test(m[1]), m[1]);
+  check('only Wikipedia was asked (search, then page)', seen.slice(before).every((u) => new URL(u).hostname === 'en.wikipedia.org') && seen.length - before === 2, seen.slice(before).join(' '));
+  check('no chart was made and the camera stayed idle', (await page.evaluate(() => __standin.chartHistory.length)) === 0 && (await page.evaluate(() => __standin.slides.state().mode)) === 'idle');
+  await until(page, () => __standin.logLines.filter((l) => /research \[5\/5\]/.test(l)).length === 1, 3000);
+  const lg = await page.evaluate(() => __standin.logLines.filter((l) => /research \[/.test(l)));
+  check('timestamped steps 1/5 to 5/5 in the log', lg.length === 5 && lg.every((l) => /^\d{4}-\d\d-\d\dT/.test(l)) && /\[5\/5\]/.test(lg[4]), lg.join(' | '));
+  await turn(page, 1, 'Anand', 'stand-in, research test rovers please', 1500);
+  check('same topic asked again is not repeated', (await msgs(page)).length === 2);
+  await wait(300);
+  await turn(page, 2, 'You', 'Eswar, research invented rovers numbers', 100);
+  await until(page, () => window.sentMessages.length >= 4, 8000);
+  const m2 = await msgs(page);
+  check('own speech also works; a sentence whose quote is not on the page is dropped', /Rovers reached 190 in 2023\./.test(m2[3]) && !/500/.test(m2[3]), m2[3]);
+  await turn(page, 3, 'Anand', 'stand-in, research nothing page at all', 100);
+  await until(page, () => window.sentMessages.length >= 6, 8000);
+  const m3 = await msgs(page);
+  check('nothing quotable: says so and does not guess', /found nothing reliable/.test(m3[5]) && !/Source:/.test(m3[5]), m3[5]);
+  check('no page errors', errors.length === 0, errors[0]);
+  await page.context().close();
+}
+{
+  const { page } = await session({ autoRelay: false }, false);
+  await turn(page, 0, 'Anand', 'stand-in, research test rovers and get back to me', 100);
+  await until(page, () => window.sentMessages.length >= 2, 6000);
+  const m = await msgs(page);
+  check('no relay: says Eswar will follow up himself', m.length === 2 && /follow up/.test(m[1]), JSON.stringify(m));
   await page.context().close();
 }
 

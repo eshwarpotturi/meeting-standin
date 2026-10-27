@@ -707,9 +707,12 @@
           st.handled = st.text;
           if (isSelf(st.speaker)) {
             // Your own speech is never answered as a question, but "stand-in, chart <topic>" shows a chart.
+            if (NS.research && NS.research.handleSpeech(st.text)) return;
             if (NS.dataChart) NS.dataChart.handleSpeech(st.text);
             return;
           }
+          // Anyone can ask the stand-in to research something and get back in the chat.
+          if (NS.research && NS.research.handleSpeech(st.text)) return;
           fire(st.speaker, st.text);
         }, NS.config.captionDebounceMs);
       });
@@ -725,6 +728,7 @@
     clearTimeout(blockTimer);
     blockTimer = setTimeout(function () {
       // No speaker names in this layout, so a chart phrase is accepted from anyone in the caption box.
+      if (NS.research && NS.research.handleSpeech(text)) return;
       if (NS.dataChart && NS.dataChart.handleSpeech(text)) return;
       fire('', text);
     }, NS.config.captionDebounceMs);
@@ -1239,16 +1243,22 @@
       user: 'Request: ' + topic + '\n\nPage text:\n' + pageText.slice(0, 12000),
     };
   }
-  async function fromWikipedia(plan, topic) {
-    const sBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=3&format=json&srsearch=' + esc(plan.query));
+  // Search Wikipedia, read the best page as plain text (tables kept as "a | b" rows). Null if there is no usable page.
+  async function wikiPage(query) {
+    const sBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=3&format=json&srsearch=' + esc(query));
     let hits;
     try { hits = JSON.parse(sBody).query.search; } catch (e) { hits = []; }
-    if (!hits || !hits.length) return { ok: false, reason: 'no Wikipedia page found' };
+    if (!hits || !hits.length) return null;
     const title = hits[0].title;
     const pBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=parse&prop=text&redirects=1&format=json&page=' + esc(title));
     let html;
-    try { html = JSON.parse(pBody).parse.text['*']; } catch (e) { return { ok: false, reason: 'could not read the Wikipedia page' }; }
-    const text = htmlToText(html);
+    try { html = JSON.parse(pBody).parse.text['*']; } catch (e) { return null; }
+    return { title: title, url: 'https://en.wikipedia.org/wiki/' + esc(title.replace(/ /g, '_')), text: htmlToText(html) };
+  }
+  async function fromWikipedia(plan, topic) {
+    const pg = await wikiPage(plan.query);
+    if (!pg) return { ok: false, reason: 'no usable Wikipedia page found' };
+    const title = pg.title, text = pg.text, url = pg.url;
     const pr = buildPrompt(topic, text);
     const raw = await llmJson(pr.system, pr.user);
     const m = String(raw).match(/\{[\s\S]*\}/);
@@ -1257,7 +1267,6 @@
     const v = validateExtract(o, text, NS.config.chartMinPoints);
     if (!v.ok) return { ok: false, reason: 'Wikipedia "' + title + '": ' + v.reason };
     const years = v.points.every(function (p) { return /^\d{4}/.test(p.label); });
-    const url = 'https://en.wikipedia.org/wiki/' + esc(title.replace(/ /g, '_'));
     const ctitle = cut(o.title || plan.title, 60);
     const base = { title: ctitle, unit: cut(o.unit, 30), source: 'Source: Wikipedia, ' + title, sourceName: 'Wikipedia, "' + title + '" (' + url + ')' };
     const chart = years
@@ -1362,7 +1371,107 @@
 
   NS.chartHistory = NS.chartHistory || [];
   NS.events = NS.events || new EventTarget();
-  NS.dataChart = { detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
+  NS.dataChart = { llmJson: llmJson, fetchPublic: fetchPublic, wikiPage: wikiPage, norm: norm, numbersIn: numbersIn, cut: cut, detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
+})();
+
+// Research and get back: someone says "stand-in, research <topic> and get back to me" (or "Eswar, look into ...").
+// Anyone in the meeting can ask. The stand-in answers in the Meet chat only (no camera change, no voice):
+//   1 an immediate one-line acknowledgement,
+//   2 it finds a Wikipedia page (through the relay's allowlist),
+//   3 the model writes up to 4 sentences, each with the exact words from the page that support it,
+//   4 a sentence is kept only if its quote is really in the page. Anything else is dropped,
+//   5 one labelled chat message with the kept sentences and the source link. If nothing survives, it says it found nothing reliable.
+(function () {
+  const NS = (window.__standin = window.__standin || {});
+  const seen = {};
+  let running = false;
+
+  function triggerRe() {
+    const name = String(NS.config.userName || 'Eswar').replace(/[^A-Za-z]/g, '');
+    return new RegExp('\\b(?:stand[\\s-]?in|' + name + ')\\b[,:.\\s-]*(?:can you |could you |please )*(?:do some research (?:on|about|into)|research|look into|look up|find out (?:about|more about)?|dig into)\\b[\\s,]*(?:(?:on|about|for|into|the|something|some)\\b[\\s,]*)*([^.?!\\n]{4,160})', 'i');
+  }
+  function detect(text) {
+    const m = String(text || '').match(triggerRe());
+    if (!m) return '';
+    return DC().cut(m[1].replace(/\b(?:and|then)?\s*(?:get|come) back to (?:me|us)\b.*$/i, '').replace(/\b(?:and|then)\s*(?:let|tell) (?:me|us) know\b.*$/i, ''), 160).replace(/[,;:\s]+$/, '').replace(/\s+please$/i, '');
+  }
+  function DC() { return NS.dataChart; }
+  function step(n, t) { NS.log('research [' + n + '/5]: ' + t); }
+
+  function prompt(topic, pageText) {
+    return {
+      system:
+        'Write a short factual answer to the request using ONLY the page text. Up to 4 sentences. Do not add anything from memory. ' +
+        'Every sentence must come with a quote: the exact words copied from the page text that support it. ' +
+        'Reply with JSON only: {"sentences":[{"text":"<one sentence>","quote":"<exact words from the page, at least 6 characters>"}]}. ' +
+        'If the page does not answer the request, reply {"sentences":[]}.',
+      user: 'Request: ' + topic + '\n\nPage text:\n' + pageText.slice(0, 12000),
+    };
+  }
+  // Keep only sentences whose quote is word for word in the page. Returns the kept sentences.
+  function checkAnswer(o, pageText) {
+    if (!o || !Array.isArray(o.sentences)) return [];
+    const hay = DC().norm(pageText);
+    const out = [];
+    o.sentences.slice(0, 4).forEach(function (s) {
+      const q = DC().norm(s && s.quote), t = DC().cut(s && s.text, 300);
+      if (t && q.length >= 6 && hay.indexOf(q) >= 0) out.push(t);
+    });
+    return out;
+  }
+
+  async function run(topic) {
+    if (running) { NS.log('research: already working on one request'); return { ok: false, reason: 'busy' }; }
+    running = true;
+    const t0 = performance.now();
+    try {
+      step(1, 'request: ' + topic);
+      try { await NS.chat.post('Noted. I will look up "' + topic + '" and post what I find here shortly.'); } catch (e) { NS.log('research: chat post failed: ' + e.message); }
+      if (NS.relayReady && !(await NS.relayReady())) {
+        await NS.chat.post('I cannot reach my lookup service right now, so Eswar will follow up on "' + topic + '" himself.');
+        return { ok: false, reason: 'relay not running' };
+      }
+      const pg = await DC().wikiPage(DC().cut(topic, 100).replace(/[^\w\s'-]/g, ' '));
+      step(2, pg ? 'page: ' + pg.title : 'no page found');
+      let kept = [];
+      if (pg) {
+        const p = prompt(topic, pg.text);
+        const raw = await DC().llmJson(p.system, p.user);
+        const m = String(raw).match(/\{[\s\S]*\}/);
+        let o = null;
+        try { o = m ? JSON.parse(m[0]) : null; } catch (e) { o = null; }
+        step(3, 'model gave ' + ((o && o.sentences && o.sentences.length) || 0) + ' sentences');
+        kept = checkAnswer(o, pg.text);
+        step(4, kept.length + ' sentences kept after the quote check');
+      }
+      let msg;
+      if (kept.length) msg = 'Research on "' + topic + '": ' + kept.join(' ') + ' Source: Wikipedia, "' + pg.title + '" (' + pg.url + '). Not checked by Eswar yet.';
+      else msg = 'I looked for "' + topic + '" but found nothing reliable I can quote, so I will not guess. Eswar will follow up.';
+      await NS.chat.post(msg);
+      step(5, 'posted in ' + Math.round(performance.now() - t0) + ' ms');
+      const res = { ok: kept.length > 0, topic: topic, kept: kept, source: pg && pg.url, at: NS.isoLocal() };
+      NS.researchHistory.unshift(res);
+      return res;
+    } catch (e) {
+      NS.log('research failed: ' + e.message);
+      try { await NS.chat.post('My lookup on "' + topic + '" failed, so Eswar will follow up himself.'); } catch (e2) { /* ignore */ }
+      return { ok: false, reason: e.message };
+    } finally { running = false; }
+  }
+
+  function handleSpeech(text) {
+    if (NS.config.research === false || !DC()) return false;
+    const topic = detect(text);
+    if (!topic) return false;
+    const key = DC().norm(topic), now = Date.now();
+    if (seen[key] && now - seen[key] < (NS.config.chartRepeatMs || 300000)) return true;
+    seen[key] = now;
+    NS.log('heard a research request: ' + topic);
+    run(topic);
+    return true;
+  }
+  NS.researchHistory = NS.researchHistory || [];
+  NS.research = { detect: detect, run: run, handleSpeech: handleSpeech, checkAnswer: checkAnswer };
 })();
 
 // All-in-one stand-in: captions in -> answer in the Meet chat AND as slides on your camera. Control panel with Yes/No override.

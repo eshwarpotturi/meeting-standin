@@ -150,16 +150,22 @@
       user: 'Request: ' + topic + '\n\nPage text:\n' + pageText.slice(0, 12000),
     };
   }
-  async function fromWikipedia(plan, topic) {
-    const sBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=3&format=json&srsearch=' + esc(plan.query));
+  // Search Wikipedia, read the best page as plain text (tables kept as "a | b" rows). Null if there is no usable page.
+  async function wikiPage(query) {
+    const sBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=3&format=json&srsearch=' + esc(query));
     let hits;
     try { hits = JSON.parse(sBody).query.search; } catch (e) { hits = []; }
-    if (!hits || !hits.length) return { ok: false, reason: 'no Wikipedia page found' };
+    if (!hits || !hits.length) return null;
     const title = hits[0].title;
     const pBody = await fetchPublic('https://en.wikipedia.org/w/api.php?action=parse&prop=text&redirects=1&format=json&page=' + esc(title));
     let html;
-    try { html = JSON.parse(pBody).parse.text['*']; } catch (e) { return { ok: false, reason: 'could not read the Wikipedia page' }; }
-    const text = htmlToText(html);
+    try { html = JSON.parse(pBody).parse.text['*']; } catch (e) { return null; }
+    return { title: title, url: 'https://en.wikipedia.org/wiki/' + esc(title.replace(/ /g, '_')), text: htmlToText(html) };
+  }
+  async function fromWikipedia(plan, topic) {
+    const pg = await wikiPage(plan.query);
+    if (!pg) return { ok: false, reason: 'no usable Wikipedia page found' };
+    const title = pg.title, text = pg.text, url = pg.url;
     const pr = buildPrompt(topic, text);
     const raw = await llmJson(pr.system, pr.user);
     const m = String(raw).match(/\{[\s\S]*\}/);
@@ -168,7 +174,6 @@
     const v = validateExtract(o, text, NS.config.chartMinPoints);
     if (!v.ok) return { ok: false, reason: 'Wikipedia "' + title + '": ' + v.reason };
     const years = v.points.every(function (p) { return /^\d{4}/.test(p.label); });
-    const url = 'https://en.wikipedia.org/wiki/' + esc(title.replace(/ /g, '_'));
     const ctitle = cut(o.title || plan.title, 60);
     const base = { title: ctitle, unit: cut(o.unit, 30), source: 'Source: Wikipedia, ' + title, sourceName: 'Wikipedia, "' + title + '" (' + url + ')' };
     const chart = years
@@ -273,5 +278,5 @@
 
   NS.chartHistory = NS.chartHistory || [];
   NS.events = NS.events || new EventTarget();
-  NS.dataChart = { detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
+  NS.dataChart = { llmJson: llmJson, fetchPublic: fetchPublic, wikiPage: wikiPage, norm: norm, numbersIn: numbersIn, cut: cut, detect: detect, run: run, handleSpeech: handleSpeech, parsePlan: parsePlan, parseWorldBank: parseWorldBank, validateExtract: validateExtract, htmlToText: htmlToText, summarise: summarise };
 })();
