@@ -12,7 +12,8 @@ The stand-in answers from a folder, not one file: `brain-test\brain-context\`. P
 - `brain-test\sync-repos.ps1` refreshes `brain-context\repos` from your public GitHub repos (untested: no PowerShell where it was written).
 - The folder is private and is not in Git (`.gitignore`). `brain-pack.txt` still works as a fallback.
 - Settings: `contextBudget` (characters per question, 9000), `contextRefreshMs` (how often the relay folder is re-read, 60000).
-- Tested: `node test/context.mjs`, 14 checks (right file found, misheard word, size limit, core file, old relay without `/context`). Not tested: the relay's `/context` endpoint in PowerShell, and real questions on real notes.
+- Answers are checked against the notes: a generic status line or a number that is not in the notes is held ("I will confirm after the meeting").
+- Tested: `node test/context.mjs`, 17 checks (right file found, misheard word, size limit, core file, old relay without `/context`). Not tested: the relay's `/context` endpoint in PowerShell, and real questions on real notes.
 
 ## Research and get back (chat only) (27 Oct 2026)
 

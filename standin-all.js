@@ -263,7 +263,8 @@
     const system =
       'You are the brain of a labelled AI stand-in that attends a meeting for ' + name + '. Someone asked ' + name + ' an open question. ' +
       'Use only the context pack below. If it does not clearly cover the question, reply {"answer":"unsure","confidence":0}. ' +
-      'Otherwise reply with JSON only: {"answer":"open","confidence":0-100,"chat":"at most 2 short sentences, first person",' +
+      'Answer with the specific facts and numbers from the pack that answer the question. Never write general status phrases such as "progressing well", "key milestones", "on track" or "interesting insights". If the pack has no specific fact for the question, reply unsure. ' +
+      'Otherwise reply with JSON only: {"answer":"open","confidence":0-100,"chat":"at most 3 short sentences, first person, with the concrete facts",' +
       '"slides":[{"title":"at most 6 words","text":"at most 25 words"}],"chart":null or {"type":"pie" or "bar","title":"...","items":[{"label":"...","value":number}]}}. ' +
       'Use 1 to 3 slides. Add a chart only if the context pack has real numbers for it; never invent numbers. ' +
       'Confidence is how sure you are that ' + name + ' himself would say this.';
@@ -428,6 +429,22 @@
     return stubDecide(q);
   }
 
+  // An open answer must be backed by the notes: every number in it appears in the pack, at least two of its content words appear in the pack,
+  // and it is not a generic status line. Anything else is held ("I will confirm after the meeting").
+  const FLUFF = /progressing well|key milestones|on track|interesting insights|making good progress|going well|as challenges arise|addressing challenges/i;
+  function grounded(open, pack) {
+    if (!pack || !open || open.answer !== 'open') return true;
+    const hay = String(pack).toLowerCase().replace(/(\d),(?=\d{3})/g, '$1');
+    const text = String(open.chat || '').toLowerCase().replace(/(\d),(?=\d{3})/g, '$1');
+    if (FLUFF.test(text)) return false;
+    const nums = text.match(/\d+(?:\.\d+)?/g) || [];
+    if (nums.some(function (n) { return hay.indexOf(n) < 0; })) return false;
+    const ws = Array.from(new Set(text.match(/[a-z]{5,}/g) || []));
+    const hits = ws.filter(function (w) { return hay.indexOf(w) >= 0; });
+    return hits.length >= 2 && (nums.length > 0 || hits.length >= 3);
+  }
+  NS.groundedAnswer = grounded;
+
   async function decideOpen(q, recent) {
     const cfg = NS.config;
     let useRelay = cfg.brain === 'relay';
@@ -436,7 +453,9 @@
       try {
         const pack = NS.context ? await NS.context.packFor(q, recent) : null;
         const d = await bridgeSend('answer', { question: q, recent: recent || '', userName: cfg.userName, pack: pack }, 25000);
-        return parseOpen(JSON.stringify(d.json));
+        const open = parseOpen(JSON.stringify(d.json));
+        if (!grounded(open, pack)) { NS.log('answer held: it is not backed by the notes (' + String(open.chat).slice(0, 80) + ')'); return UNSURE_OPEN; }
+        return open;
       } catch (e) {
         NS.log('relay failed: ' + e.message);
         return UNSURE_OPEN;

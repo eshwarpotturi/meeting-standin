@@ -33,6 +33,8 @@ const relaySrv = http.createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
     const body = JSON.parse(b || '{}');
     if (req.url === '/context') { calls.push({ url: '/context' }); if (!contextOn) { res.statusCode = 404; return res.end('{"error":"not found"}'); } return res.end(JSON.stringify({ files: FILES })); }
+    if (req.url === '/answer' && /fluff/.test(body.question)) return res.end(JSON.stringify({ answer: 'open', confidence: 95, chat: 'The Veeva project is progressing well with key milestones being met.', slides: [{ title: 'Status', text: 'Going well.' }], chart: null }));
+    if (req.url === '/answer' && /invented/.test(body.question)) return res.end(JSON.stringify({ answer: 'open', confidence: 95, chat: 'Veeva revised 12.5% of its features, mostly in Safety.', slides: [{ title: 'Veeva', text: '12.5%' }], chart: null }));
     if (req.url === '/answer') { calls.push({ url: '/answer', pack: body.pack }); return res.end(JSON.stringify({ answer: 'open', confidence: 90, chat: 'Veeva revised 3.6% of its features.', slides: [{ title: 'Veeva', text: '3.6% revised.' }], chart: null })); }
     if (req.url === '/decide') { calls.push({ url: '/decide', pack: body.pack }); return res.end(JSON.stringify({ answer: 'yes', confidence: 90, reason: 'The notes say so.' })); }
     res.statusCode = 404; res.end('{}');
@@ -87,6 +89,26 @@ console.log(`${stamp()} --- a spoken question uses the folder ---`);
   check('the relay was asked for the folder once, not for every question', calls.filter((c) => c.url === '/context').length === 1, calls.map((c) => c.url).join(' '));
   const lg = await page.evaluate(() => __standin.logLines.filter((l) => /context:/.test(l)));
   check('log shows the folder load and what each question used, with timestamps', lg.length >= 2 && lg.every((l) => /^\d{4}-\d\d-\d\dT/.test(l)) && /release-second-opinion/.test(lg.join(' ')), lg.join(' | ').slice(0, 300));
+  await page.context().close();
+}
+
+console.log(`${stamp()} --- vague or invented answers are held ---`);
+{
+  const { page } = await session();
+  await turn(page, 0, 'Anand', 'Eswar, how is the fluff Veeva project going?', 100);
+  await until(page, () => window.sentMessages.length >= 1, 8000);
+  let m = await msgs(page);
+  check('a generic status line ("progressing well, key milestones") is not posted; it says it will confirm', m.length === 1 && /I will confirm after the meeting/.test(m[0]) && !/progressing/.test(m[0]), m[0]);
+  await wait(3300);
+  await turn(page, 1, 'Anand', 'Eswar, what is the invented Veeva ratings story?', 100);
+  await until(page, () => window.sentMessages.length >= 2, 8000);
+  m = await msgs(page);
+  check('an answer with a number that is not in the notes (12.5%) is held', m.length === 2 && /I will confirm after the meeting/.test(m[1]) && !/12\.5/.test(m[1]), m[1]);
+  await wait(3300);
+  await turn(page, 2, 'Anand', 'Eswar, how is the Veeva project going?', 100);
+  await until(page, () => window.sentMessages.length >= 3, 8000);
+  m = await msgs(page);
+  check('a specific answer backed by the notes (3.6%, Veeva) is still posted', /Veeva revised 3\.6%/.test(m[2]), m[2]);
   await page.context().close();
 }
 
