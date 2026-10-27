@@ -133,7 +133,7 @@
     const raw = sentence.toLowerCase();
     const core = raw.replace(/[a-z]+/g, function (w) { return isName(w) ? '' : w; });
     const clauses = core
-      .split(/[,;:—-]/)
+      .split(/[,;:\u2014-]/)
       .map(function (c) { return c.replace(/[?!.]/g, '').trim(); })
       .filter(Boolean);
     const endsQ = /\?\s*$/.test(sentence.trim());
@@ -671,7 +671,7 @@
   }
   function mmss(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
   NS.transcriptMarkdown = function () {
-    const head = '# ' + (norm(document.title.replace(/^Meet\s*[-–]\s*/, '')) || 'Meeting') + '\n\n- **Started**: ' + new Date(startedAt).toLocaleString() + '\n\n---\n';
+    const head = '# ' + (norm(document.title.replace(/^Meet\s*[-\u2013]\s*/, '')) || 'Meeting') + '\n\n- **Started**: ' + new Date(startedAt).toLocaleString() + '\n\n---\n';
     return head + NS.transcript.map(function (t) { return '\n## ' + t.speaker + ' [' + mmss(t.at) + ']\n\n' + t.text + '\n'; }).join('');
   };
   NS.downloadTranscript = function () {
@@ -950,7 +950,7 @@
     if (S.mode === 'show' && S.frames.length > 1 && S.i < S.frames.length - 1 && Date.now() - S.since >= step) {
       S.i++; S.since = Date.now();
     }
-    const idle = { kind: 'text', title: '', text: 'AI stand-in for ' + NS.config.userName + ' – listening' };
+    const idle = { kind: 'text', title: '', text: 'AI stand-in for ' + NS.config.userName + ' \u2013 listening' };
     const f = S.mode === 'show' ? S.frames[S.i] : idle;
     drawFrame(f);
   }
@@ -1212,7 +1212,7 @@
       .replace(/&#\d+;|&[a-z]+;/g, ' ')
       .replace(/[ \t]+/g, ' ').replace(/ ?\| ?\n/g, '\n').replace(/\n{2,}/g, '\n').trim();
   }
-  function norm(t) { return String(t || '').replace(/[\s ]+/g, ' ').trim().toLowerCase(); }
+  function norm(t) { return String(t || '').replace(/[\s\u00a0]+/g, ' ').trim().toLowerCase(); }
   function numbersIn(s) {
     return (String(s).replace(/(\d),(?=\d{3}\b)/g, '$1').match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
   }
@@ -1554,9 +1554,9 @@
     NS.events.addEventListener('decision', function (ev) {
       const r = ev.detail;
       const label = r.action === 'held' ? 'Held for you' : r.action === 'answered' ? 'Answered (open)' : r.decision.answer.toUpperCase();
-      last.textContent = label + ' · ' + r.decision.confidence + '% · ' + r.question;
+      last.textContent = label + ' \u00b7 ' + r.decision.confidence + '% \u00b7 ' + r.question;
     });
-    NS.events.addEventListener('chart', function (ev) { last.textContent = 'Chart shown · ' + ev.detail.chart.title + ' · ' + ev.detail.chart.source; });
+    NS.events.addEventListener('chart', function (ev) { last.textContent = 'Chart shown \u00b7 ' + ev.detail.chart.title + ' \u00b7 ' + ev.detail.chart.source; });
     drawStatus();
   }
   function drawStatus() {

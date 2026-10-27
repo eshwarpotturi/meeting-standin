@@ -133,7 +133,7 @@
     const raw = sentence.toLowerCase();
     const core = raw.replace(/[a-z]+/g, function (w) { return isName(w) ? '' : w; });
     const clauses = core
-      .split(/[,;:—-]/)
+      .split(/[,;:\u2014-]/)
       .map(function (c) { return c.replace(/[?!.]/g, '').trim(); })
       .filter(Boolean);
     const endsQ = /\?\s*$/.test(sentence.trim());
@@ -671,7 +671,7 @@
   }
   function mmss(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
   NS.transcriptMarkdown = function () {
-    const head = '# ' + (norm(document.title.replace(/^Meet\s*[-–]\s*/, '')) || 'Meeting') + '\n\n- **Started**: ' + new Date(startedAt).toLocaleString() + '\n\n---\n';
+    const head = '# ' + (norm(document.title.replace(/^Meet\s*[-\u2013]\s*/, '')) || 'Meeting') + '\n\n- **Started**: ' + new Date(startedAt).toLocaleString() + '\n\n---\n';
     return head + NS.transcript.map(function (t) { return '\n## ' + t.speaker + ' [' + mmss(t.at) + ']\n\n' + t.text + '\n'; }).join('');
   };
   NS.downloadTranscript = function () {
