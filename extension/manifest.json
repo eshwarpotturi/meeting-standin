@@ -15,6 +15,7 @@
         "src/audio.js",
         "src/avatar.js",
         "src/brain.js",
+        "src/context.js",
         "src/captions.js",
         "src/media.js",
         "src/panel.js",

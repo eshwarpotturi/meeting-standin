@@ -305,7 +305,8 @@
   NS.relayCall = function (kind, body, ms) { return bridgeSend(kind, body, ms || 20000); };
   NS.relayReady = function () { return checkRelay(); };
   async function relayDecide(q, recent) {
-    const d = await bridgeSend('decide', { question: q, recent: recent || '', userName: NS.config.userName }, 12000);
+    const pack = NS.context ? await NS.context.packFor(q, recent) : null;
+    const d = await bridgeSend('decide', { question: q, recent: recent || '', userName: NS.config.userName, pack: pack }, 12000);
     return parseDecision(JSON.stringify(d.json));
   }
 
@@ -349,7 +350,8 @@
     if (!useRelay && cfg.brain === 'stub' && cfg.autoRelay) useRelay = await checkRelay();
     if (useRelay) {
       try {
-        const d = await bridgeSend('answer', { question: q, recent: recent || '', userName: cfg.userName }, 25000);
+        const pack = NS.context ? await NS.context.packFor(q, recent) : null;
+        const d = await bridgeSend('answer', { question: q, recent: recent || '', userName: cfg.userName, pack: pack }, 25000);
         return parseOpen(JSON.stringify(d.json));
       } catch (e) {
         NS.log('relay failed: ' + e.message);

@@ -30,6 +30,8 @@
     chartHoldMs: 20000, // how long the chart stays on the camera
     chartStepMs: 9000, // chart, then a one-line summary
     chartChat: true, // also post one labelled line with the source in the Meet chat
+    contextBudget: 9000, // characters of your notes sent with each question
+    contextRefreshMs: 60000, // the relay's context folder is re-read at most this often
     chartRepeatMs: 300000, // the same topic is not charted again from speech for this long (standin.chart() always works)
     chartMinPoints: 3, // fewer data points than this is not charted
     // Context pack: what Claude may use. Plain text for 'claude'; rules for 'stub'.

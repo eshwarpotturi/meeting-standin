@@ -3,6 +3,7 @@
 param(
   [string]$TokenFile = "$PSScriptRoot\..\..\Innovation\AIA-Gov\.foundry-token.txt",
   [string]$PackFile = "$PSScriptRoot\brain-pack.txt",
+  [string]$ContextDir = "$PSScriptRoot\brain-context",
   [string]$Base = "https://llmfoundry.straivedemo.com",
   [string]$Model = "gpt-4.1-mini",
   [int]$Port = 8765
@@ -11,13 +12,25 @@ $ErrorActionPreference = "Stop"
 function Log($m) { Write-Host ("{0} [relay] {1}" -f (Get-Date -Format "yyyy-MM-ddTHH:mm:ss.fffzzz"), $m) }
 if (-not (Test-Path $TokenFile)) { throw "Token file not found: $TokenFile (pass -TokenFile)" }
 $token = (Get-Content $TokenFile -Raw).Trim()
-$pack = Get-Content $PackFile -Raw
+# Notes: the page picks the relevant pieces of everything in brain-context (POST /context). brain-pack.txt is only the fallback.
+$pack = ""; if (Test-Path $PackFile) { $pack = Get-Content $PackFile -Raw }
+function LoadContext {
+  $list = @()
+  if (Test-Path $ContextDir) {
+    $root = (Resolve-Path $ContextDir).Path
+    Get-ChildItem -Path $ContextDir -Recurse -File | Where-Object { $_.Extension -in ".md", ".txt" -and $_.Length -lt 2000000 } | ForEach-Object {
+      $list += @{ file = $_.FullName.Substring($root.Length).TrimStart("\", "/").Replace("\", "/"); text = (Get-Content $_.FullName -Raw -Encoding UTF8) }
+    }
+  }
+  return @{ files = $list }
+}
+function PackFor($in) { if ($in.pack) { return [string]$in.pack } return $pack }
 function Send($res, $code, $text, $type = "application/json; charset=utf-8") {
   $b = [Text.Encoding]::UTF8.GetBytes($text)
   $res.StatusCode = $code; $res.ContentType = $type; $res.ContentLength64 = $b.Length
   $res.OutputStream.Write($b, 0, $b.Length)
 }
-function Decide($question, $recent, $name) {
+function Decide($question, $recent, $name, $pack) {
   $system = "You are the decision brain of a labelled AI stand-in that attends a meeting for $name. You answer only yes/no questions put to $name. Use only the context pack below. If the context pack does not clearly settle the question, answer `"unsure`" with low confidence. Confidence is how sure you are that $name himself would give this answer. Reply with JSON only: {`"answer`":`"yes`"|`"no`"|`"unsure`",`"confidence`":0-100,`"reason`":`"one plain sentence, first person, at most 25 words`"}."
   $user = "Context pack:`n$pack`n`nRecent meeting lines:`n$recent`n`nQuestion for ${name}: $question"
   $body = @{ model = $Model; temperature = 0; messages = @(@{ role = "system"; content = $system }, @{ role = "user"; content = $user }) } | ConvertTo-Json -Depth 6
@@ -27,7 +40,7 @@ function Decide($question, $recent, $name) {
   if ($text -match "\{[\s\S]*\}") { return $Matches[0] }
   return '{"answer":"unsure","confidence":0,"reason":"I could not read the answer."}'
 }
-function Answer($question, $recent, $name) {
+function Answer($question, $recent, $name, $pack) {
   $system = "You are the brain of a labelled AI stand-in that attends a meeting for $name. Someone asked $name an open question. Use only the context pack below. If it does not clearly cover the question, reply {`"answer`":`"unsure`",`"confidence`":0}. Otherwise reply with JSON only: {`"answer`":`"open`",`"confidence`":0-100,`"chat`":`"at most 2 short sentences, first person`",`"slides`":[{`"title`":`"at most 6 words`",`"text`":`"at most 25 words`"}],`"chart`":null or {`"type`":`"pie`" or `"bar`",`"title`":`"...`",`"items`":[{`"label`":`"...`",`"value`":number}]}}. Use 1 to 3 slides. Add a chart only if the context pack has real numbers for it; never invent numbers. Confidence is how sure you are that $name himself would say this."
   $user = "Context pack:`n$pack`n`nRecent meeting lines:`n$recent`n`nQuestion for ${name}: $question"
   $body = @{ model = $Model; temperature = 0; messages = @(@{ role = "system"; content = $system }, @{ role = "user"; content = $user }) } | ConvertTo-Json -Depth 6
@@ -87,16 +100,21 @@ while ($listener.IsListening) {
     if ($req.Url.AbsolutePath -eq "/decide" -and $req.HttpMethod -eq "POST") {
       $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json
       $n++; $sw = [Diagnostics.Stopwatch]::StartNew()
-      $out = Decide $in.question $in.recent $in.userName
+      $out = Decide $in.question $in.recent $in.userName (PackFor $in)
       Log ("question {0}: {1} -> {2} ({3} ms)" -f $n, $in.question, ($out -replace "\s+", " "), $sw.ElapsedMilliseconds)
       Send $res 200 $out; continue
     }
     if ($req.Url.AbsolutePath -eq "/answer" -and $req.HttpMethod -eq "POST") {
       $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json
       $n++; $sw = [Diagnostics.Stopwatch]::StartNew()
-      $out = Answer $in.question $in.recent $in.userName
+      $out = Answer $in.question $in.recent $in.userName (PackFor $in)
       Log ("open question {0}: {1} -> {2} ({3} ms)" -f $n, $in.question, ($out -replace "\s+", " "), $sw.ElapsedMilliseconds)
       Send $res 200 $out; continue
+    }
+    if ($req.Url.AbsolutePath -eq "/context" -and $req.HttpMethod -eq "POST") {
+      $sw = [Diagnostics.Stopwatch]::StartNew(); $c = LoadContext
+      Log ("context: {0} files ({1} ms)" -f $c.files.Count, $sw.ElapsedMilliseconds)
+      Send $res 200 ($c | ConvertTo-Json -Compress -Depth 4); continue
     }
     if ($req.Url.AbsolutePath -eq "/llm" -and $req.HttpMethod -eq "POST") {
       $sr = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8); $in = $sr.ReadToEnd() | ConvertFrom-Json

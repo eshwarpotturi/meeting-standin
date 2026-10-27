@@ -2,6 +2,18 @@
 
 **Demo page:** https://eshwarpotturi.github.io/meeting-standin/
 
+## Your context: all your notes and projects (27 Oct 2026)
+
+The stand-in answers from a folder, not one file: `brain-test\brain-context\`. Put any `.md` or `.txt` files in it (sub-folders are fine): project notes, READMEs, who is who, standing rules. The relay serves the whole folder. For each question the page picks the most relevant pieces, so the folder can be large and the model only sees what matches the question.
+
+- Files whose name starts with `00` are always included (who you are, standing rules). The list of file names is always included, so the model knows what exists.
+- Matching tolerates misheard words ("Viva" finds the Veeva notes) and counts file names.
+- Each log line shows which files a question used: `context: question uses 5,200 characters from projects/release-second-opinion.md, ...`
+- `brain-test\sync-repos.ps1` refreshes `brain-context\repos` from your public GitHub repos (untested: no PowerShell where it was written).
+- The folder is private and is not in Git (`.gitignore`). `brain-pack.txt` still works as a fallback.
+- Settings: `contextBudget` (characters per question, 9000), `contextRefreshMs` (how often the relay folder is re-read, 60000).
+- Tested: `node test/context.mjs`, 14 checks (right file found, misheard word, size limit, core file, old relay without `/context`). Not tested: the relay's `/context` endpoint in PowerShell, and real questions on real notes.
+
 ## Research and get back (chat only) (27 Oct 2026)
 
 Anyone in the meeting can say **"stand-in, research <topic> and get back to me"** (also "Eswar, look into ..." or "do some research on ..."). The stand-in answers in the Meet chat only: no camera change, no voice.
