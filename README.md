@@ -139,7 +139,7 @@ It listens to the Meet captions. When someone asks you a question by name, it an
 
 Why chat only: Anand's feedback was to drop the face (people trust it less the more human it looks) and the voice (the timing is hard), and to use chat as the output. A slide-style answer on the camera is the next step (v2).
 
-### Use it (Straive laptop, no extension needed)
+### Use it (work laptop, no extension needed)
 
 1. Start the relay, as before: `brain-test\relay.ps1` (it holds the LLM Foundry key; the page never sees it).
 2. Join the Meet call and switch on captions.
